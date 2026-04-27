@@ -2,6 +2,62 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 /**
+ * Render every slide off-screen (one at a time), screenshot it with
+ * html2canvas at 2× pixel density, stitch into a multi-page 16:9 PDF.
+ *
+ * Both libraries are dynamically imported so they don't bloat the
+ * already-lazy InsightsDeck chunk for users who never click Export.
+ */
+async function exportDeckToPdf({ slides, renderSlide, filename }) {
+  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ]);
+
+  // Off-screen render host: 1280×720 (16:9) — matches on-screen aspect
+  const host = document.createElement('div');
+  host.style.cssText = `
+    position: fixed; left: -9999px; top: 0;
+    width: 1280px; height: 720px;
+    pointer-events: none;
+    background: #ffffff;
+  `;
+  document.body.appendChild(host);
+
+  // Use a JSX root we can re-render slides into via createRoot
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(host);
+
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [1280, 720] });
+
+  try {
+    for (let i = 0; i < slides.length; i++) {
+      // Render slide, wait a frame for paint
+      root.render(renderSlide(slides[i], i + 1, slides.length));
+      await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+      // Extra wait so framer-motion settles + fonts apply
+      await new Promise((res) => setTimeout(res, 90));
+
+      const canvas = await html2canvas(host, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+        windowWidth: 1280,
+        windowHeight: 720,
+      });
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      if (i > 0) pdf.addPage([1280, 720], 'landscape');
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, 1280, 720, undefined, 'FAST');
+    }
+    pdf.save(filename);
+  } finally {
+    root.unmount();
+    document.body.removeChild(host);
+  }
+}
+
+/**
  * Deck shell — owns navigation, keyboard handling, fullscreen, and the
  * framer-motion fade between slides. Slide rendering is delegated to
  * the `renderSlide` callback so the shell stays template-agnostic.
@@ -12,9 +68,10 @@ import { motion, AnimatePresence } from 'framer-motion';
  *   F               toggle fullscreen
  *   Esc             exit fullscreen
  */
-export default function SlideDeck({ slides, theme, renderSlide }) {
+export default function SlideDeck({ slides, theme, renderSlide, exportFilename }) {
   const [index, setIndex] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const containerRef = useRef(null);
 
   const total = slides.length;
@@ -76,6 +133,25 @@ export default function SlideDeck({ slides, theme, renderSlide }) {
       document.exitFullscreen?.();
     }
   }, []);
+
+  const exportPdf = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      await exportDeckToPdf({
+        slides,
+        renderSlide,
+        filename: exportFilename
+          ? `${exportFilename}-${today}.pdf`
+          : `Brahma-Insights-${today}.pdf`,
+      });
+    } catch (err) {
+      console.error('PDF export failed', err);
+    } finally {
+      setExporting(false);
+    }
+  }, [slides, renderSlide, exportFilename, exporting]);
 
   if (!total) {
     return (
@@ -144,6 +220,8 @@ export default function SlideDeck({ slides, theme, renderSlide }) {
         goTo={goTo}
         toggleFullscreen={toggleFullscreen}
         fullscreen={fullscreen}
+        exportPdf={exportPdf}
+        exporting={exporting}
       />
     </div>
   );
@@ -153,7 +231,7 @@ export default function SlideDeck({ slides, theme, renderSlide }) {
 // Controls — dots, prev/next, slide counter, fullscreen
 // ──────────────────────────────────────────────────────────────────────
 
-function DeckControls({ theme, index, total, next, prev, goTo, toggleFullscreen, fullscreen }) {
+function DeckControls({ theme, index, total, next, prev, goTo, toggleFullscreen, fullscreen, exportPdf, exporting }) {
   return (
     <div
       style={{
@@ -225,6 +303,32 @@ function DeckControls({ theme, index, total, next, prev, goTo, toggleFullscreen,
       >
         {String(index + 1).padStart(2, '0')} / {String(total).padStart(2, '0')}
       </span>
+
+      <div style={{ width: 1, height: 18, background: theme.border }} />
+
+      <button
+        onClick={exportPdf}
+        disabled={exporting}
+        title="Download deck as PDF"
+        style={{
+          background: 'transparent',
+          border: 'none',
+          cursor: exporting ? 'wait' : 'pointer',
+          padding: '6px 8px',
+          borderRadius: 6,
+          color: theme.fg2,
+          fontSize: 12,
+          fontFamily: 'var(--font-mono)',
+          fontWeight: 700,
+          letterSpacing: 1,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          opacity: exporting ? 0.6 : 1,
+        }}
+      >
+        {exporting ? '⋯ EXPORTING' : '↓ EXPORT PDF'}
+      </button>
 
       <div style={{ width: 1, height: 18, background: theme.border }} />
 

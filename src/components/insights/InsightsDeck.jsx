@@ -30,6 +30,7 @@ export default function InsightsDeck({ scenario, theme, complete }) {
       renderSlide={(slide, slideNum, total) =>
         renderSlide(slide, scenario, theme, slideNum, total)
       }
+      exportFilename={`Brahma-${scenario.id}-Insights`}
     />
   );
 }
