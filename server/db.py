@@ -106,6 +106,23 @@ class Project(Base):
     workspace      = relationship("Workspace", back_populates="projects")
 
 
+class PasswordResetToken(Base):
+    """
+    One row per reset request. Token is stored hashed (sha256) so a DB leak
+    can't be replayed. Tokens expire 30 minutes after creation and can be
+    used once.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id          = Column(Integer, primary_key=True)
+    user_id     = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash  = Column(String(64), unique=True, nullable=False, index=True)
+    created_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at  = Column(DateTime, nullable=False)
+    used_at     = Column(DateTime, nullable=True)
+
+
 class Feedback(Base):
     """
     Human-in-the-loop signal — each row is a prediction + the human verdict on it.

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useAuth, ApiError } from '../../auth';
+import { useAuth, ApiError, authApi } from '../../auth';
 import {
   AuthCard,
   AuthInput,
@@ -262,11 +262,25 @@ function SignUp({ theme, onSignup, onGoogle, googleEnabled, switchTo }) {
 function Forgot({ theme, switchTo }) {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState('');
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     if (!email) return;
-    setSent(true);
+    setErr('');
+    setSubmitting(true);
+    try {
+      await authApi.forgot(email);
+      setSent(true);
+    } catch (e) {
+      // Backend returns 204 even when email doesn't exist (no enumeration leak),
+      // so this only fires on network / server errors. Surface the same generic
+      // success message — silent failure is worse UX than an honest "try again".
+      setErr(e instanceof ApiError ? e.message : 'Could not send reset link. Try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -278,6 +292,9 @@ function Forgot({ theme, switchTo }) {
           <div style={{ fontSize: 13, color: theme.fg2, textAlign: 'center', marginTop: -10 }}>
             Enter the email you signed up with. We'll send a one-time reset link.
           </div>
+
+          {err && <ErrorBanner theme={theme}>{err}</ErrorBanner>}
+
           <AuthInput
             theme={theme}
             label="Work email"
@@ -290,7 +307,9 @@ function Forgot({ theme, switchTo }) {
             required
             mono
           />
-          <PrimaryBtn theme={theme} type="submit">Send reset link</PrimaryBtn>
+          <PrimaryBtn theme={theme} type="submit" disabled={submitting || !email}>
+            {submitting ? 'Sending…' : 'Send reset link'}
+          </PrimaryBtn>
         </>
       ) : (
         <>

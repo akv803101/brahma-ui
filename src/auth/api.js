@@ -34,6 +34,8 @@ export const authApi = {
   login:  (body) => request('/auth/login',  { method: 'POST', body: JSON.stringify(body) }),
   logout: ()     => request('/auth/logout', { method: 'POST' }),
   me:     ()     => request('/me'),
+  forgot: (email)             => request('/auth/forgot',         { method: 'POST', body: JSON.stringify({ email }) }),
+  resetPassword: (token, pw)  => request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password: pw }) }),
   googleStartUrl: '/api/auth/google/start',
 };
 

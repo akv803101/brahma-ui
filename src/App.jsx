@@ -1,7 +1,12 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from './auth';
 import { useTheme } from './theme/useTheme.js';
-import { SignInFlow, CreateWorkspaceScreen, CreateProjectScreen } from './components/auth';
+import {
+  SignInFlow,
+  CreateWorkspaceScreen,
+  CreateProjectScreen,
+  ResetPasswordScreen,
+} from './components/auth';
 import BrahmaShell from './components/BrahmaShell.jsx';
 import { BrahmaMark } from './components/primitives';
 
@@ -37,6 +42,36 @@ export default function App() {
   const { status } = useAuth();
   const { primaryColor, dark } = loadAuthTheme();
   const theme = useTheme(primaryColor, dark);
+
+  // Detect ?reset=<token> in the URL — overrides every other route while present
+  const [resetToken, setResetToken] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('reset');
+  });
+  useEffect(() => {
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      setResetToken(params.get('reset'));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  if (resetToken) {
+    return (
+      <ResetPasswordScreen
+        theme={theme}
+        token={resetToken}
+        onDone={() => {
+          // Strip ?reset from URL, send the user back to sign-in
+          const url = new URL(window.location.href);
+          url.search = '';
+          window.history.replaceState({}, '', url.toString());
+          setResetToken(null);
+        }}
+      />
+    );
+  }
 
   switch (status) {
     case 'loading':

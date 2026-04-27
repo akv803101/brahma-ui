@@ -46,6 +46,7 @@ from .oauth_routes import (
     GOOGLE_CLIENT_ID,
     router as oauth_router,
 )
+from .password_reset import router as password_reset_router
 from .workspace_routes import router as workspace_router
 
 # ════════════════════════════════════════════════════════════════════════
@@ -400,6 +401,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(oauth_router)
+app.include_router(password_reset_router)
 app.include_router(workspace_router)
 app.include_router(memory_router)
 app.include_router(feedback_router)
