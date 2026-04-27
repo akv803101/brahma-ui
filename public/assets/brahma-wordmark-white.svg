@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" fill="none">
+  
+  <g color="#ffffff" transform="translate(2 2)">
+    <path d="M 52 32 A 20 20 0 1 0 32 52" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" fill="none"></path>
+    <path d="M 45 32 A 13 13 0 1 0 32 45" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" fill="none" opacity="0.85"></path>
+    <path d="M 38 32 A 6 6 0 1 0 32 38" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" fill="none" opacity="0.7"></path>
+    <circle cx="51" cy="13" r="3.2" fill="currentColor"></circle>
+  </g>
+
+  
+  
+  <g fill="#ffffff" transform="translate(80 14)">
+    
+    <path d="M0 0 H14 Q22 0 22 8 Q22 14 17 15 Q23 16 23 22 Q23 30 14 30 H0 Z&#xA;             M5 4 V13 H13 Q17 13 17 8.5 Q17 4 13 4 Z&#xA;             M5 17 V26 H13 Q18 26 18 21.5 Q18 17 13 17 Z"></path>
+    
+    <g transform="translate(28 0)">
+      <path d="M0 0 H14 Q23 0 23 9 Q23 15 17 16.5 L24 30 H18 L11.5 17 H5 V30 H0 Z&#xA;               M5 4 V13 H13 Q18 13 18 8.5 Q18 4 13 4 Z"></path>
+    </g>
+    
+    <g transform="translate(56 0)">
+      <path d="M0 30 L11 0 H15 L26 30 H20.5 L17.8 22 H8.2 L5.5 30 Z&#xA;               M9.7 17.5 H16.3 L13 8 Z"></path>
+    </g>
+    
+    <g transform="translate(86 0)">
+      <path d="M0 0 H5 V12 H18 V0 H23 V30 H18 V17 H5 V30 H0 Z"></path>
+    </g>
+    
+    <g transform="translate(114 0)">
+      <path d="M0 0 H5 L14 18 L23 0 H28 V30 H23 V10 L15.5 25 H12.5 L5 10 V30 H0 Z"></path>
+    </g>
+    
+    <g transform="translate(147 0)">
+      <path d="M0 30 L11 0 H15 L26 30 H20.5 L17.8 22 H8.2 L5.5 30 Z&#xA;               M9.7 17.5 H16.3 L13 8 Z"></path>
+    </g>
+  </g>
+
+  
+  <circle cx="252" cy="42" r="3.2" fill="#ffffff"></circle>
+</svg>

@@ -1,0 +1,326 @@
+/* ============================================================================
+   Brahma — Design Tokens
+   Ported from Brahma Design System / colors_and_type.css
+   Font paths rewritten to Vite public/ convention.
+   ============================================================================ */
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/fonts/PlusJakartaSans-Variable.woff2') format('woff2-variations'),
+       url('/fonts/PlusJakartaSans-Variable.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Variable.woff2') format('woff2-variations'),
+       url('/fonts/JetBrainsMono-Variable.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ── BRAND COLORS ─────────────────────────────────────────────────────── */
+  --brahma-primary:      #2563EB;
+  --brahma-primary-deep: #1E3A8A;
+  --brahma-highlight:    #DC2626;
+  --brahma-success:      #16A34A;
+  --brahma-warning:      #D97706;
+  --brahma-purple:       #7C3AED;
+  --brahma-cyan:         #0891B2;
+  --brahma-pink:         #BE185D;
+
+  /* ── NEUTRALS ─────────────────────────────────────────────────────────── */
+  --brahma-dark:    #111827;
+  --brahma-slate:   #1F2937;
+  --brahma-neutral: #6B7280;
+  --brahma-muted:   #D1D5DB;
+  --brahma-line:    #E5E7EB;
+  --brahma-tint:    #F3F4F6;
+  --brahma-surface: #F8FAFC;
+  --brahma-bg:      #FFFFFF;
+
+  /* ── SEMANTIC TINTS ───────────────────────────────────────────────────── */
+  --brahma-blue-tint:  #EFF6FF;
+  --brahma-blue-soft:  #BFDBFE;
+  --brahma-red-tint:   #FEE2E2;
+  --brahma-red-soft:   #FEF2F2;
+  --brahma-amber-tint: #FEF3C7;
+  --brahma-amber-soft: #FFFBEB;
+  --brahma-green-tint: #D1FAE5;
+  --brahma-green-soft: #F0FDF4;
+  --brahma-slate-soft: #9CA3AF;
+
+  /* ── TERMINAL PALETTE ─────────────────────────────────────────────────── */
+  --term-bg:      #0B1020;
+  --term-bg-elev: #111831;
+  --term-fg:      #E5E7EB;
+  --term-dim:     #6B7280;
+  --term-accent:  #60A5FA;
+  --term-prompt:  #A78BFA;
+  --term-ok:      #4ADE80;
+  --term-warn:    #FBBF24;
+  --term-err:     #F87171;
+
+  /* ── FOREGROUND ROLES ─────────────────────────────────────────────────── */
+  --fg1: #111827;
+  --fg2: #1F2937;
+  --fg3: #6B7280;
+  --fg4: #9CA3AF;
+
+  /* ── TYPE FAMILIES ────────────────────────────────────────────────────── */
+  --font-sans:    'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-display: 'Plus Jakarta Sans', -apple-system, sans-serif;
+
+  /* ── TYPE SCALE ───────────────────────────────────────────────────────── */
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 16px;
+  --text-md:   17px;
+  --text-lg:   20px;
+  --text-xl:   24px;
+  --text-2xl:  32px;
+  --text-3xl:  44px;
+  --text-4xl:  60px;
+  --text-5xl:  80px;
+
+  /* ── SPACING ──────────────────────────────────────────────────────────── */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── RADII ────────────────────────────────────────────────────────────── */
+  --radius-sm:   6px;
+  --radius-md:   10px;
+  --radius-lg:   12px;
+  --radius-xl:   14px;
+  --radius-full: 999px;
+
+  /* ── SHADOWS ──────────────────────────────────────────────────────────── */
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.08);
+  --shadow-pop:  0 4px 12px rgba(17, 24, 39, 0.10);
+  --shadow-hero: 0 10px 30px rgba(30, 58, 138, 0.25);
+
+  /* ── BORDERS ──────────────────────────────────────────────────────────── */
+  --border-hair:        1px solid #E5E7EB;
+  --border-card:        1px solid #E5E7EB;
+  --border-accent-left: 4px solid var(--brahma-primary);
+
+  /* ── GRADIENTS ────────────────────────────────────────────────────────── */
+  --grad-banner: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%);
+
+  /* ── CHART TOKENS ─────────────────────────────────────────────────────── */
+  --chart-grid: #E5E7EB;
+  --chart-axis: #D1D5DB;
+  --chart-tick: #6B7280;
+}
+
+/* ============================================================================
+   GLOBAL RESET + DESKTOP WALLPAPER
+   ============================================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--font-sans);
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg2);
+  line-height: 1.55;
+  background: #EEF1F5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+.desktop {
+  height: 100vh;
+  width: 100vw;
+  padding: 18px;
+  background:
+    radial-gradient(ellipse 80% 50% at 30% 0%, rgba(124, 58, 237, .12), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 80% 100%, rgba(37, 99, 235, .12), transparent 60%),
+    #EEF1F5;
+}
+.desktop.dark {
+  background:
+    radial-gradient(ellipse 80% 50% at 30% 0%, rgba(124, 58, 237, .30), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 80% 100%, rgba(37, 99, 235, .28), transparent 60%),
+    #050912;
+}
+
+/* ============================================================================
+   SEMANTIC TYPOGRAPHY
+   ============================================================================ */
+
+.b-h1, h1 {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: 800;
+  color: var(--fg1);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0;
+}
+.b-hero {
+  font-family: var(--font-display);
+  font-size: var(--text-4xl);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--fg1);
+}
+.b-h2, h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--fg1);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0;
+}
+.b-h3, h3 {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--brahma-primary-deep);
+  letter-spacing: -0.005em;
+  margin: 0;
+}
+.b-section-header {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--brahma-primary-deep);
+  border-bottom: 2px solid var(--brahma-primary);
+  padding-bottom: 6px;
+  margin: 20px 0 14px 0;
+  letter-spacing: -0.005em;
+}
+.b-subtitle {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fg3);
+  line-height: 1.4;
+}
+.b-p, p {
+  font-size: var(--text-base);
+  font-weight: 400;
+  color: var(--fg2);
+  line-height: 1.55;
+  margin: 0 0 var(--space-3) 0;
+}
+.b-metric-val {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--brahma-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.b-metric-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--fg3);
+  margin-top: 2px;
+  letter-spacing: 0.01em;
+}
+.b-caption { font-size: var(--text-xs); color: var(--fg4); font-weight: 400; }
+.b-source  { font-size: 11px; color: var(--fg4); font-weight: 400; }
+
+.b-code, code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  font-weight: 500;
+  color: var(--brahma-slate);
+  background: var(--brahma-tint);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.b-terminal {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--term-fg);
+  line-height: 1.55;
+  background: var(--term-bg);
+}
+
+/* ── RISK TIER PILLS ─────────────────────────────────────────────────────── */
+.b-pill-high {
+  background: var(--brahma-red-tint); color: var(--brahma-highlight);
+  padding: 4px 12px; border-radius: var(--radius-full);
+  font-weight: 700; font-size: 0.9rem;
+}
+.b-pill-med {
+  background: var(--brahma-amber-tint); color: var(--brahma-warning);
+  padding: 4px 12px; border-radius: var(--radius-full);
+  font-weight: 700; font-size: 0.9rem;
+}
+.b-pill-low {
+  background: var(--brahma-green-tint); color: var(--brahma-success);
+  padding: 4px 12px; border-radius: var(--radius-full);
+  font-weight: 700; font-size: 0.9rem;
+}
+
+/* ── STATUS CHIPS ────────────────────────────────────────────────────────── */
+.b-chip-done { color: var(--brahma-success);   font-weight: 700; font-size: 12px; }
+.b-chip-run  { color: var(--brahma-primary);   font-weight: 700; font-size: 12px; }
+.b-chip-wait { color: var(--fg4);              font-weight: 700; font-size: 12px; }
+.b-chip-fail { color: var(--brahma-highlight); font-weight: 700; font-size: 12px; }
+
+/* ============================================================================
+   ANIMATIONS
+   ============================================================================ */
+
+@keyframes brahmaPulse {
+  0%   { transform: scale(1);   opacity: .5; }
+  100% { transform: scale(2.2); opacity: 0;  }
+}
+@keyframes brahmaBlink {
+  0%, 49%  { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes brahmaLogIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* ============================================================================
+   FORM CONTROLS
+   ============================================================================ */
+
+input[type=range] {
+  -webkit-appearance: none;
+  background: transparent;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: currentColor;
+  opacity: .2;
+  border-radius: 999px;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #2563EB;
+  margin-top: -6px;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
+}
