@@ -24,13 +24,27 @@ import math
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Awaitable, Callable
+from typing import Annotated, Any, Awaitable, Callable
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
+
+from starlette.middleware.sessions import SessionMiddleware
+
+from sqlalchemy.orm import Session
+
+from .auth_core import current_user
+from .auth_routes import router as auth_router
+from .db import Membership, User, db_dependency, init_db
+from .oauth_routes import (
+    GOOGLE_CLIENT_ID,
+    router as oauth_router,
+)
+from .workspace_routes import router as workspace_router
 
 # ════════════════════════════════════════════════════════════════════════
 # Optional real-Brahma path
@@ -349,24 +363,47 @@ _RUNS: dict[str, dict[str, Any]] = {}
 # FastAPI app
 # ════════════════════════════════════════════════════════════════════════
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="Brahma backend",
     description="Mock + real bridge to brahma_engine.BrahmaEngine. Used by the React UI via /api.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
-# Permissive CORS — fine for a dev bridge. Tighten for production.
+# CORS — restrict to the frontend origin so we can ship httpOnly auth cookies.
+# In the default Vite proxy setup all /api calls are same-origin, so this only
+# matters if the frontend runs at a different host (e.g. production).
+_FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=[_FRONTEND_ORIGIN],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+_SESSION_SECRET = os.getenv("JWT_SECRET", "dev-only-change-me")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_SESSION_SECRET,
+    same_site="lax",
+    https_only=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+)
+
+app.include_router(auth_router)
+app.include_router(oauth_router)
+app.include_router(workspace_router)
+
 
 class StartPipelineBody(BaseModel):
     scenarioId: str = Field(default="churn", description="One of: churn|ltv|forecast|fraud|segmentation|anomaly|loanSemiSup")
+    projectId: int | None = Field(default=None, description="Optional — link the run to a project the user can access.")
     goal: str | None = None
     sourceConfig: dict[str, Any] | None = None
 
@@ -382,6 +419,7 @@ def health() -> dict[str, Any]:
         "mode": "real-brahma" if USE_REAL_BRAHMA else "mock",
         "scenarios": list(SCENARIOS.keys()),
         "runs": len(_RUNS),
+        "google_oauth": bool(GOOGLE_CLIENT_ID),
     }
 
 
@@ -394,9 +432,30 @@ def list_scenarios() -> dict[str, Any]:
 
 
 @app.post("/api/pipelines")
-def start_pipeline(body: StartPipelineBody) -> dict[str, Any]:
+def start_pipeline(
+    body: StartPipelineBody,
+    user: Annotated[User, Depends(current_user)],
+    db: Annotated[Session, Depends(db_dependency)],
+) -> dict[str, Any]:
     if body.scenarioId not in SCENARIOS:
         raise HTTPException(404, f"Unknown scenarioId: {body.scenarioId}")
+
+    # If a projectId was supplied, verify the user is a member of its workspace
+    if body.projectId is not None:
+        from .db import Project
+        project = db.query(Project).filter(Project.id == body.projectId).first()
+        if not project:
+            raise HTTPException(404, "Project not found.")
+        is_member = (
+            db.query(Membership)
+            .filter(
+                Membership.user_id == user.id,
+                Membership.workspace_id == project.workspace_id,
+            )
+            .first()
+        )
+        if not is_member:
+            raise HTTPException(403, "You are not a member of this project's workspace.")
 
     scenario = SCENARIOS[body.scenarioId]
     stages = STAGE_MAP[scenario["problemType"]]
@@ -404,6 +463,8 @@ def start_pipeline(body: StartPipelineBody) -> dict[str, Any]:
 
     _RUNS[run_id] = {
         "scenarioId": body.scenarioId,
+        "projectId": body.projectId,
+        "userId": user.id,
         "goal": body.goal or scenario["goal"],
         "sourceConfig": body.sourceConfig or {},
         "totalStages": len(stages),
@@ -420,9 +481,14 @@ def start_pipeline(body: StartPipelineBody) -> dict[str, Any]:
 
 
 @app.get("/api/pipelines/{run_id}/stream")
-async def stream_pipeline(run_id: str) -> EventSourceResponse:
+async def stream_pipeline(
+    run_id: str,
+    user: Annotated[User, Depends(current_user)],
+) -> EventSourceResponse:
     if run_id not in _RUNS:
         raise HTTPException(404, f"Unknown run: {run_id}")
+    if _RUNS[run_id].get("userId") not in (None, user.id):
+        raise HTTPException(403, "This run belongs to a different user.")
 
     run = _RUNS[run_id]
     scenario = SCENARIOS[run["scenarioId"]]
@@ -462,9 +528,14 @@ async def stream_pipeline(run_id: str) -> EventSourceResponse:
 
 
 @app.get("/api/pipelines/{run_id}/report")
-def get_report(run_id: str) -> dict[str, Any]:
+def get_report(
+    run_id: str,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
     if run_id not in _RUNS:
         raise HTTPException(404, f"Unknown run: {run_id}")
+    if _RUNS[run_id].get("userId") not in (None, user.id):
+        raise HTTPException(403, "This run belongs to a different user.")
     run = _RUNS[run_id]
     scenario = SCENARIOS[run["scenarioId"]]
     return {
@@ -475,9 +546,15 @@ def get_report(run_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/pipelines/{run_id}/predict")
-def predict(run_id: str, body: PredictBody) -> dict[str, Any]:
+def predict(
+    run_id: str,
+    body: PredictBody,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
     if run_id not in _RUNS:
         raise HTTPException(404, f"Unknown run: {run_id}")
+    if _RUNS[run_id].get("userId") not in (None, user.id):
+        raise HTTPException(403, "This run belongs to a different user.")
     run = _RUNS[run_id]
     scenario = SCENARIOS[run["scenarioId"]]
     score_fn: Callable[[dict], float] = scenario["score_fn"]

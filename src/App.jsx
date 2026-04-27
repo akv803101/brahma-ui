@@ -1,159 +1,92 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { SCENARIOS, getStagesForScenario } from './data/scenarios.js';
+import React from 'react';
+import { useAuth } from './auth';
 import { useTheme } from './theme/useTheme.js';
-import BrahmaWindow from './components/BrahmaWindow.jsx';
-import TweaksPanel from './components/TweaksPanel.jsx';
-import { ConnectScreen, RunningScreen, LivePredict } from './components/screens';
-import { ReportLayoutA, ReportLayoutB, ReportLayoutC } from './components/report';
-import { PulseDot } from './components/primitives';
+import { SignInFlow, CreateWorkspaceScreen, CreateProjectScreen } from './components/auth';
+import BrahmaShell from './components/BrahmaShell.jsx';
+import { BrahmaMark } from './components/primitives';
 
-const REPORT_LAYOUTS = { A: ReportLayoutA, B: ReportLayoutB, C: ReportLayoutC };
-
-const TWEAK_DEFAULTS = {
-  primaryColor: 'blue',
-  dark: false,
-  scenario: 'churn',
-  stageIdx: 0,
-  layout: 'A',
-};
+/**
+ * Top-level route gate.
+ *
+ * The auth context decides what to render:
+ *   loading           → splash with brand mark
+ *   anonymous         → SignInFlow (signin / signup / forgot)
+ *   needs_workspace   → CreateWorkspaceScreen
+ *   needs_project     → CreateProjectScreen
+ *   ready             → BrahmaShell (the main app)
+ *
+ * Theme for the auth + onboarding screens is read once from localStorage
+ * (so logging out preserves the user's color/dark-mode preference).
+ */
 
 const STORAGE_KEY = 'brahma_tweaks_v1';
-const SCREEN_KEY = 'brahma_screen_v1';
 
-function loadTweaks() {
+function loadAuthTheme() {
   try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return { ...TWEAK_DEFAULTS, ...stored };
+    const tweaks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    return {
+      primaryColor: tweaks.primaryColor || 'blue',
+      dark: !!tweaks.dark,
+    };
   } catch {
-    return TWEAK_DEFAULTS;
+    return { primaryColor: 'blue', dark: false };
   }
 }
 
 export default function App() {
-  const [tweaks, setTweaksState] = useState(loadTweaks);
-  const [screen, setScreenState] = useState(
-    () => localStorage.getItem(SCREEN_KEY) || 'connect'
-  );
+  const { status } = useAuth();
+  const { primaryColor, dark } = loadAuthTheme();
+  const theme = useTheme(primaryColor, dark);
 
-  const setTweaks = (patch) => {
-    setTweaksState((prev) => {
-      const next = { ...prev, ...patch };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  };
+  switch (status) {
+    case 'loading':
+      return <SplashScreen theme={theme} />;
+    case 'anonymous':
+      return <SignInFlow theme={theme} />;
+    case 'needs_workspace':
+      return <CreateWorkspaceScreen theme={theme} />;
+    case 'needs_project':
+      return <CreateProjectScreen theme={theme} />;
+    case 'ready':
+    default:
+      return <BrahmaShell />;
+  }
+}
 
-  const setScreen = (s) => {
-    setScreenState(s);
-    try {
-      localStorage.setItem(SCREEN_KEY, s);
-    } catch {}
-  };
-
-  const scenario = SCENARIOS[tweaks.scenario] || SCENARIOS.churn;
-  const stages = getStagesForScenario(scenario);
-  const theme = useTheme(tweaks.primaryColor, tweaks.dark);
-
-  // Reset stageIdx when scenario changes (different stage set)
-  useEffect(() => {
-    setTweaksState((prev) => ({ ...prev, stageIdx: 0 }));
-  }, [tweaks.scenario]);
-
-  // Auto-advance stages while Running screen is open and not yet complete
-  const intervalRef = useRef(null);
-  useEffect(() => {
-    if (screen !== 'running') {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      return;
-    }
-    if (tweaks.stageIdx >= stages.length) return;
-    intervalRef.current = setInterval(() => {
-      setTweaksState((prev) => {
-        const max = stages.length;
-        const next = prev.stageIdx < max ? prev.stageIdx + 1 : prev.stageIdx;
-        const updated = { ...prev, stageIdx: next };
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-        } catch {}
-        return updated;
-      });
-    }, 700);
-    return () => clearInterval(intervalRef.current);
-  }, [screen, stages.length, tweaks.stageIdx, tweaks.scenario]);
-
-  const ReportComponent = REPORT_LAYOUTS[tweaks.layout] || ReportLayoutA;
-
-  const body = (() => {
-    switch (screen) {
-      case 'connect':
-        return (
-          <ConnectScreen
-            scenario={scenario}
-            theme={theme}
-            onStart={() => {
-              setTweaks({ stageIdx: 0 });
-              setScreen('running');
-            }}
-          />
-        );
-      case 'running':
-        return (
-          <RunningScreen
-            scenario={scenario}
-            theme={theme}
-            stageIdx={tweaks.stageIdx}
-            onComplete={() => {
-              // Auto-advance to report when the pipeline finishes
-              setScreen('report');
-            }}
-          />
-        );
-      case 'report':
-        return (
-          <ReportComponent
-            scenario={scenario}
-            theme={theme}
-            stageIdx={tweaks.stageIdx}
-          />
-        );
-      case 'live':
-        return <LivePredict scenario={scenario} theme={theme} />;
-      default:
-        return null;
-    }
-  })();
-
-  // Right-side tab-bar accessory — stage pill while running
-  const rightAccessory =
-    screen === 'running' ? (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px' }}>
-        <PulseDot
-          color={tweaks.stageIdx >= stages.length ? theme.pos : theme.primary}
-          size={7}
-        />
-        <span style={{ fontSize: 11, color: theme.fg2, fontFamily: 'var(--font-mono)' }}>
-          {tweaks.stageIdx >= stages.length
-            ? 'complete'
-            : `running · ${tweaks.stageIdx}/${stages.length}`}
-        </span>
-      </div>
-    ) : null;
-
+function SplashScreen({ theme }) {
+  const isDark = theme.bg === '#0B1020';
   return (
-    <div className={'desktop' + (tweaks.dark ? ' dark' : '')}>
-      <BrahmaWindow
-        theme={theme}
-        scenario={scenario}
-        screen={screen}
-        setScreen={setScreen}
-        stageIdx={tweaks.stageIdx}
-        rightAccessory={rightAccessory}
+    <div
+      style={{
+        height: '100vh',
+        width: '100vw',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 14,
+        background: isDark ? '#050912' : '#EEF1F5',
+        backgroundImage: isDark
+          ? `radial-gradient(ellipse 60% 40% at 30% 10%, ${theme.primary}30, transparent 60%),
+             radial-gradient(ellipse 70% 50% at 80% 100%, #7C3AED25, transparent 60%)`
+          : `radial-gradient(ellipse 60% 40% at 30% 10%, ${theme.primary}10, transparent 60%),
+             radial-gradient(ellipse 70% 50% at 80% 100%, #7C3AED10, transparent 60%)`,
+        fontFamily: 'var(--font-sans)',
+      }}
+    >
+      <BrahmaMark size={56} color={theme.primary} />
+      <div
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: 2.5,
+          textTransform: 'uppercase',
+          color: theme.fg2,
+        }}
       >
-        {body}
-      </BrahmaWindow>
-      <TweaksPanel state={tweaks} setState={setTweaks} />
+        Brahma is awake.
+      </div>
     </div>
   );
 }

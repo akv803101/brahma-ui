@@ -1,6 +1,7 @@
 import React from 'react';
 import { PulseDot, BrahmaMark } from './primitives';
 import { getStagesForScenario } from '../data/scenarios.js';
+import { AvatarMenu } from './auth';
 
 /**
  * macOS-style window chrome that wraps the entire app surface.
@@ -23,11 +24,13 @@ export default function BrahmaWindow({
   const isDark = theme.bg === '#0B1020';
   const complete = stageIdx >= stages.length;
 
+  const insightsAvailable = stageIdx >= stages.length;
   const tabs = [
-    { id: 'connect', label: 'Connect' },
-    { id: 'running', label: 'Running' },
-    { id: 'report',  label: 'Report' },
-    { id: 'live',    label: 'Live Predict' },
+    { id: 'connect',  label: 'Connect' },
+    { id: 'running',  label: 'Running' },
+    { id: 'report',   label: 'Report' },
+    { id: 'insights', label: 'Insights', disabled: !insightsAvailable, hint: 'Available after the pipeline completes' },
+    { id: 'live',     label: 'Live Predict' },
   ];
 
   return (
@@ -81,11 +84,14 @@ export default function BrahmaWindow({
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <PulseDot color={complete ? theme.pos : theme.primary} size={7} />
-          <span style={{ fontSize: 11, color: theme.fg2, fontFamily: 'var(--font-mono)' }}>
-            {complete ? 'complete' : 'running'}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <PulseDot color={complete ? theme.pos : theme.primary} size={7} />
+            <span style={{ fontSize: 11, color: theme.fg2, fontFamily: 'var(--font-mono)' }}>
+              {complete ? 'complete' : 'running'}
+            </span>
+          </div>
+          <AvatarMenu theme={theme} />
         </div>
       </div>
 
@@ -104,22 +110,26 @@ export default function BrahmaWindow({
       >
         {tabs.map((t) => {
           const active = t.id === screen;
+          const disabled = !!t.disabled;
           return (
             <button
               key={t.id}
-              onClick={() => setScreen(t.id)}
+              onClick={() => !disabled && setScreen(t.id)}
+              disabled={disabled}
+              title={disabled ? t.hint : undefined}
               style={{
                 background: 'transparent',
                 border: 'none',
-                cursor: 'pointer',
+                cursor: disabled ? 'not-allowed' : 'pointer',
                 padding: '0 14px',
                 fontSize: 13,
                 fontWeight: active ? 700 : 500,
-                color: active ? theme.primary : theme.fg2,
+                color: disabled ? theme.fg3 : active ? theme.primary : theme.fg2,
                 borderBottom: `2px solid ${active ? theme.primary : 'transparent'}`,
                 marginBottom: -1,
                 fontFamily: 'var(--font-sans)',
                 transition: 'color .15s',
+                opacity: disabled ? 0.5 : 1,
               }}
             >
               {t.label}
@@ -135,7 +145,7 @@ export default function BrahmaWindow({
         style={{
           flex: 1,
           overflow: 'auto',
-          padding: screen === 'running' ? 0 : '20px 24px',
+          padding: screen === 'running' || screen === 'insights' ? 0 : '20px 24px',
           background: theme.bg,
         }}
       >

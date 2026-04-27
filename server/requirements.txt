@@ -1,4 +1,19 @@
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
-pydantic==2.10.3
-sse-starlette==2.1.3
+# Pin lower bounds only — lets pip pick wheels that match your Python version.
+# Tested on Python 3.11–3.13; works on 3.14 once pydantic-core publishes a wheel.
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.10
+sse-starlette>=2.1
+
+# Auth
+sqlalchemy>=2.0
+bcrypt>=4.2
+python-jose[cryptography]>=3.3
+email-validator>=2.2
+python-dotenv>=1.0
+
+# Google OAuth
+authlib>=1.3
+httpx>=0.27
+itsdangerous>=2.2
