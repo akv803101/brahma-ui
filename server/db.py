@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine,
+    Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
@@ -104,19 +104,32 @@ class Project(Base):
 
 class PipelineRun(Base):
     """
-    Bookkeeping for runs spawned through /api/pipelines.
-    Mirrors the in-memory _RUNS dict so survivors persist across restarts.
-    Phase A3 attaches each run to a project.
+    Persistent run history — populates Brahma's memory.
+    Inserted on POST /api/pipelines and updated when the SSE stream fires `done`.
+
+    Mirrors the spirit of brahma_memory.BrahmaMemory in the backend repo:
+    runs are remembered across sessions so similar-goal lookups work and the
+    Memory tab can show a project / workspace's run history.
     """
 
     __tablename__ = "pipeline_runs"
 
-    id             = Column(String(32), primary_key=True)  # uuid hex
-    project_id     = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
-    scenario_id    = Column(String(32), nullable=False)
-    started_by     = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    started_at     = Column(DateTime, default=datetime.utcnow, nullable=False)
-    completed_at   = Column(DateTime, nullable=True)
+    id              = Column(String(32), primary_key=True)  # uuid hex
+    project_id      = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    scenario_id     = Column(String(32), nullable=False, index=True)
+    problem_type    = Column(String(32), nullable=False, index=True)
+
+    started_by      = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    started_at      = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    completed_at    = Column(DateTime, nullable=True)
+    status          = Column(String(16), nullable=False, default="running")  # running | complete | failed
+
+    goal            = Column(Text,        nullable=True)
+    source_type     = Column(String(32),  nullable=True)
+    best_model      = Column(String(64),  nullable=True)
+    primary_metric  = Column(String(32),  nullable=True)
+    primary_value   = Column(Float,       nullable=True)
+    notes           = Column(Text,        nullable=True)
 
 
 # ════════════════════════════════════════════════════════════════════════

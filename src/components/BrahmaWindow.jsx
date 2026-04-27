@@ -31,6 +31,7 @@ export default function BrahmaWindow({
     { id: 'report',   label: 'Report' },
     { id: 'insights', label: 'Insights', disabled: !insightsAvailable, hint: 'Available after the pipeline completes' },
     { id: 'live',     label: 'Live Predict' },
+    { id: 'memory',   label: 'Memory' },
   ];
 
   return (

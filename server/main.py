@@ -39,7 +39,8 @@ from sqlalchemy.orm import Session
 
 from .auth_core import current_user
 from .auth_routes import router as auth_router
-from .db import Membership, User, db_dependency, init_db
+from .db import Membership, PipelineRun, Project, User, db_dependency, init_db
+from .memory_routes import router as memory_router
 from .oauth_routes import (
     GOOGLE_CLIENT_ID,
     router as oauth_router,
@@ -399,6 +400,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(oauth_router)
 app.include_router(workspace_router)
+app.include_router(memory_router)
 
 
 class StartPipelineBody(BaseModel):
@@ -442,7 +444,6 @@ def start_pipeline(
 
     # If a projectId was supplied, verify the user is a member of its workspace
     if body.projectId is not None:
-        from .db import Project
         project = db.query(Project).filter(Project.id == body.projectId).first()
         if not project:
             raise HTTPException(404, "Project not found.")
@@ -460,17 +461,35 @@ def start_pipeline(
     scenario = SCENARIOS[body.scenarioId]
     stages = STAGE_MAP[scenario["problemType"]]
     run_id = uuid.uuid4().hex[:12]
+    goal = body.goal or scenario["goal"]
+    source_type = (body.sourceConfig or {}).get("sourceId") or (body.sourceConfig or {}).get("type")
 
     _RUNS[run_id] = {
         "scenarioId": body.scenarioId,
         "projectId": body.projectId,
         "userId": user.id,
-        "goal": body.goal or scenario["goal"],
+        "goal": goal,
         "sourceConfig": body.sourceConfig or {},
         "totalStages": len(stages),
         "startedAt": datetime.utcnow().isoformat() + "Z",
         "currentStage": 0,
     }
+
+    # Persist the run for memory / history
+    db.add(
+        PipelineRun(
+            id=run_id,
+            project_id=body.projectId,
+            scenario_id=body.scenarioId,
+            problem_type=scenario["problemType"],
+            started_by=user.id,
+            goal=goal,
+            source_type=source_type,
+            status="running",
+        )
+    )
+    db.commit()
+
     return {
         "runId": run_id,
         "scenarioId": body.scenarioId,
@@ -515,6 +534,9 @@ async def stream_pipeline(
             }
             await asyncio.sleep(0.25)
 
+        # Mark the persisted run as complete with primary-metric snapshot
+        _mark_run_complete(run_id, scenario)
+
         yield {
             "event": "done",
             "data": _json({
@@ -525,6 +547,25 @@ async def stream_pipeline(
         }
 
     return EventSourceResponse(event_generator())
+
+
+def _mark_run_complete(run_id: str, scenario: dict) -> None:
+    """Update the persistent PipelineRun row with completion metadata."""
+    from .db import SessionLocal
+    session = SessionLocal()
+    try:
+        row = session.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+        if row:
+            primary_kpi = scenario["kpis"][0] if scenario.get("kpis") else None
+            row.status = "complete"
+            row.completed_at = datetime.utcnow()
+            row.best_model = scenario.get("finalModel")
+            if primary_kpi:
+                row.primary_metric = primary_kpi.get("label")
+                row.primary_value = float(primary_kpi.get("value", 0))
+            session.commit()
+    finally:
+        session.close()
 
 
 @app.get("/api/pipelines/{run_id}/report")

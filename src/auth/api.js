@@ -49,6 +49,24 @@ export const projectsApi = {
   get: (id) => request(`/projects/${id}`),
 };
 
+export const runsApi = {
+  recent: (params = {}) =>
+    request(`/runs/recent${qs(params)}`),
+  similar: (goal, limit = 5) =>
+    request(`/runs/similar?goal=${encodeURIComponent(goal)}&limit=${limit}`),
+  stats: (params = {}) =>
+    request(`/runs/stats${qs(params)}`),
+  get: (id) => request(`/runs/${id}`),
+};
+
 export const healthApi = {
   get: () => request('/health'),
 };
+
+function qs(params) {
+  const filtered = Object.entries(params).filter(([, v]) => v !== undefined && v !== null);
+  if (!filtered.length) return '';
+  const sp = new URLSearchParams();
+  for (const [k, v] of filtered) sp.append(k, String(v));
+  return `?${sp.toString()}`;
+}

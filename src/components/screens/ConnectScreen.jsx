@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CheckIcon } from '../primitives/Icons.jsx';
 import { getStagesForScenario } from '../../data/scenarios.js';
+import SimilarRunsPanel from './SimilarRunsPanel.jsx';
 
 /**
  * Connect screen — three sequentially-gated steps:
@@ -200,7 +201,7 @@ function StepCard({ theme, n, title, children, done = false, disabled = false })
   );
 }
 
-export default function ConnectScreen({ scenario, theme, onStart }) {
+export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate }) {
   const isDark = theme.bg === '#0B1020';
   const [sourceId, setSourceId] = useState('csv');
   const source = DATA_SOURCES.find((s) => s.id === sourceId) || DATA_SOURCES[0];
@@ -434,6 +435,19 @@ export default function ConnectScreen({ scenario, theme, onStart }) {
             }}
           />
         </div>
+
+        {step1Done && onUseTemplate && (
+          <div style={{ marginTop: 14 }}>
+            <SimilarRunsPanel
+              goal={goal}
+              theme={theme}
+              onUseTemplate={(run) => {
+                setGoal(run.goal || goal);
+                onUseTemplate(run);
+              }}
+            />
+          </div>
+        )}
       </StepCard>
 
       {/* ─── STEP 3 · Brahma writeup ───────────────────────────────── */}

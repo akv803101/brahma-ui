@@ -3,7 +3,7 @@ import { SCENARIOS, getStagesForScenario } from '../data/scenarios.js';
 import { useTheme } from '../theme/useTheme.js';
 import BrahmaWindow from './BrahmaWindow.jsx';
 import TweaksPanel from './TweaksPanel.jsx';
-import { ConnectScreen, RunningScreen, LivePredict } from './screens';
+import { ConnectScreen, RunningScreen, LivePredict, MemoryScreen } from './screens';
 import { ReportLayoutA, ReportLayoutB, ReportLayoutC } from './report';
 import { InsightsDeck } from './insights';
 import { PulseDot } from './primitives';
@@ -106,6 +106,21 @@ export default function BrahmaShell() {
 
   const ReportComponent = REPORT_LAYOUTS[tweaks.layout] || ReportLayoutA;
 
+  const useRunAsTemplate = (run) => {
+    if (run?.scenario_id && SCENARIOS[run.scenario_id]) {
+      setTweaks({ scenario: run.scenario_id, stageIdx: 0 });
+      setScreen('connect');
+    }
+  };
+
+  const openInsightsForRun = (run) => {
+    if (run?.scenario_id && SCENARIOS[run.scenario_id]) {
+      const stagesForRun = getStagesForScenario(SCENARIOS[run.scenario_id]);
+      setTweaks({ scenario: run.scenario_id, stageIdx: stagesForRun.length });
+      setScreen('insights');
+    }
+  };
+
   const body = (() => {
     switch (screen) {
       case 'connect':
@@ -117,6 +132,7 @@ export default function BrahmaShell() {
               setTweaks({ stageIdx: 0 });
               setScreen('running');
             }}
+            onUseTemplate={useRunAsTemplate}
           />
         );
       case 'running':
@@ -146,6 +162,14 @@ export default function BrahmaShell() {
         );
       case 'live':
         return <LivePredict scenario={scenario} theme={theme} />;
+      case 'memory':
+        return (
+          <MemoryScreen
+            theme={theme}
+            onUseAsTemplate={useRunAsTemplate}
+            onOpenInsights={openInsightsForRun}
+          />
+        );
       default:
         return null;
     }
