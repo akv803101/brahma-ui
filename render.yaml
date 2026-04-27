@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────
+# Brahma UI — Render.com deployment blueprint
+#
+# Single Web Service that handles BOTH the React frontend AND the
+# FastAPI backend on the same domain (e.g. https://brahma-ui.onrender.com).
+# Same-domain → cookies just work, no SameSite=None gymnastics, OAuth
+# callback lands cleanly on the same origin.
+#
+# Usage:
+#   1. Render Dashboard → Blueprints → New Blueprint Instance
+#   2. Connect the akv803101/brahma-ui repo
+#   3. When prompted, paste the secret env vars (GOOGLE_CLIENT_ID,
+#      GOOGLE_CLIENT_SECRET, optional RESEND_API_KEY)
+#   4. Click Apply — first build takes ~5 min (npm + pip + Vite build)
+#
+# After first deploy:
+#   • If Render assigned a name OTHER than "brahma-ui" (i.e. the global
+#     default was taken), update FRONTEND_ORIGIN + BACKEND_ORIGIN in the
+#     dashboard env vars to the actual URL.
+#   • Add the deployed URL's /api/auth/google/callback path to Google
+#     Cloud Console → OAuth client → Authorized redirect URIs.
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: brahma-ui
+    runtime: python
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+
+    # Build the React bundle, then install Python deps. Render's Python
+    # build environment ships with Node + npm, so this works without a
+    # separate runtime.
+    buildCommand: |
+      npm install
+      npm run build
+      pip install --upgrade pip
+      pip install -r server/requirements.txt
+
+    startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+
+    # 1 GB persistent disk for the SQLite database. Survives deploys +
+    # restarts. The DB file lives at $BRAHMA_DB_PATH (configured below).
+    disk:
+      name: brahma-data
+      mountPath: /opt/render/project/src/server/data
+      sizeGB: 1
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: NODE_VERSION
+        value: "20"
+
+      # ── Auth secrets — sync: false means "set this in the dashboard" ──
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+
+      # JWT signing key — Render generates a fresh, never-committed value
+      - key: JWT_SECRET
+        generateValue: true
+
+      # ── Cookie config — Secure=true required for HTTPS in production ──
+      - key: JWT_EXPIRY_DAYS
+        value: "30"
+      - key: COOKIE_NAME
+        value: brahma_session
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: lax
+
+      # ── URLs ──
+      # Adjust these in the Render dashboard if your service name differs
+      # from "brahma-ui" (Render appends a random suffix on collisions).
+      - key: FRONTEND_ORIGIN
+        value: https://brahma-ui.onrender.com
+      - key: BACKEND_ORIGIN
+        value: https://brahma-ui.onrender.com
+
+      # ── SQLite path — points to the persistent disk so data survives ──
+      - key: BRAHMA_DB_PATH
+        value: /opt/render/project/src/server/data/brahma.db
+
+      # ── Email (Resend) — optional; without it, reset links log to stdout ──
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        value: "Brahma <onboarding@resend.dev>"

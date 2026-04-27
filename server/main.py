@@ -32,6 +32,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
+from fastapi.responses import FileResponse
+from pathlib import Path
 
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -655,6 +657,36 @@ def _tier(scenario: dict[str, Any], score: float) -> str:
     if score > 0.35:
         return "MEDIUM"
     return "LOW"
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Static frontend — serve the React build alongside /api/* on the same domain
+# ════════════════════════════════════════════════════════════════════════
+#
+# In production (Render / Docker), `npm run build` produces ./dist at the
+# repo root before uvicorn starts. Mounting it here means:
+#   • Single domain for frontend + backend → cookies just work
+#   • OAuth callback lands on the same origin as the rest of the app
+#   • No CORS headache
+#
+# In dev, `dist/` doesn't exist (Vite serves on port 5173 with HMR), so this
+# whole block is a no-op.
+
+_DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
+
+if _DIST_DIR.exists():
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _spa_catchall(full_path: str = ""):
+        # /api/* and FastAPI's auto-routes already won via earlier registration.
+        # Defend explicitly anyway, in case someone hits an unknown /api/...:
+        if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("openapi"):
+            raise HTTPException(404)
+
+        candidate = _DIST_DIR / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        # Anything else → SPA root (so client-side routing on `?reset=...` etc. works)
+        return FileResponse(_DIST_DIR / "index.html")
 
 
 # Allow `python -m server.main` for dev convenience

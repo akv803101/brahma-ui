@@ -26,8 +26,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
 
+# Allow override via env var so the prod deployment can point at a
+# persistent disk path. Falls back to server/brahma.db locally.
 _DB_DIR = Path(__file__).resolve().parent
-_DB_PATH = _DB_DIR / "brahma.db"
+_DB_PATH = Path(os.getenv("BRAHMA_DB_PATH") or (_DB_DIR / "brahma.db"))
+_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 _DB_URL = f"sqlite:///{_DB_PATH}"
 
 engine = create_engine(
