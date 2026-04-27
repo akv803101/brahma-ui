@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import { SCENARIOS, getStagesForScenario } from '../data/scenarios.js';
 import { useTheme } from '../theme/useTheme.js';
 import BrahmaWindow from './BrahmaWindow.jsx';
 import TweaksPanel from './TweaksPanel.jsx';
 import { ConnectScreen, RunningScreen, LivePredict, MemoryScreen } from './screens';
 import { ReportLayoutA, ReportLayoutB, ReportLayoutC } from './report';
-import { InsightsDeck } from './insights';
-import { PulseDot } from './primitives';
+import { PulseDot, BrahmaMark } from './primitives';
 import { useAuth } from '../auth';
+
+// Lazy-load the Insights deck — defers framer-motion (~200 KB) and the deck
+// data (~80 slide configs) until the user opens the Insights tab.
+const InsightsDeck = lazy(() => import('./insights/InsightsDeck.jsx'));
 
 /**
  * The main app surface — the macOS-style window with the 4 tabs (Connect /
@@ -154,11 +157,13 @@ export default function BrahmaShell() {
         );
       case 'insights':
         return (
-          <InsightsDeck
-            scenario={scenario}
-            theme={theme}
-            complete={tweaks.stageIdx >= stages.length}
-          />
+          <Suspense fallback={<InsightsLoading theme={theme} />}>
+            <InsightsDeck
+              scenario={scenario}
+              theme={theme}
+              complete={tweaks.stageIdx >= stages.length}
+            />
+          </Suspense>
         );
       case 'live':
         return <LivePredict scenario={scenario} theme={theme} />;
@@ -203,6 +208,35 @@ export default function BrahmaShell() {
         {body}
       </BrahmaWindow>
       <TweaksPanel state={tweaks} setState={setTweaks} />
+    </div>
+  );
+}
+
+function InsightsLoading({ theme }) {
+  return (
+    <div
+      style={{
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 14,
+        flexDirection: 'column',
+      }}
+    >
+      <BrahmaMark size={36} color={theme.primary} />
+      <div
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          letterSpacing: 2,
+          fontWeight: 700,
+          color: theme.fg2,
+          textTransform: 'uppercase',
+        }}
+      >
+        Loading deck…
+      </div>
     </div>
   );
 }
