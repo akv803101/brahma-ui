@@ -59,6 +59,15 @@ export const runsApi = {
   get: (id) => request(`/runs/${id}`),
 };
 
+export const feedbackApi = {
+  submit: (body) =>
+    request('/feedback', { method: 'POST', body: JSON.stringify(body) }),
+  stats: (params = {}) =>
+    request(`/feedback/stats${qs(params)}`),
+  recalibrate: (projectId) =>
+    request(`/feedback/recalibrate${qs({ projectId })}`, { method: 'POST' }),
+};
+
 export const healthApi = {
   get: () => request('/health'),
 };

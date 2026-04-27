@@ -1,5 +1,7 @@
-export { default as ConnectScreen }     from './ConnectScreen.jsx';
-export { default as RunningScreen }     from './RunningScreen.jsx';
-export { default as LivePredict }       from './LivePredict.jsx';
-export { default as MemoryScreen }      from './MemoryScreen.jsx';
-export { default as SimilarRunsPanel }  from './SimilarRunsPanel.jsx';
+export { default as ConnectScreen }      from './ConnectScreen.jsx';
+export { default as RunningScreen }      from './RunningScreen.jsx';
+export { default as LivePredict }        from './LivePredict.jsx';
+export { default as MemoryScreen }       from './MemoryScreen.jsx';
+export { default as SimilarRunsPanel }   from './SimilarRunsPanel.jsx';
+export { default as FeedbackWidget }     from './FeedbackWidget.jsx';
+export { default as FeedbackIntelPanel } from './FeedbackIntelPanel.jsx';

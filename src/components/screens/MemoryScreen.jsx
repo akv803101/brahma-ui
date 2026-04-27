@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { runsApi, useAuth } from '../../auth';
 import { SCENARIOS } from '../../data/scenarios.js';
 import { BrahmaMark, PulseDot } from '../primitives';
+import FeedbackIntelPanel from './FeedbackIntelPanel.jsx';
 
 /**
  * Memory tab — Brahma's persistent run history.
@@ -71,6 +72,8 @@ export default function MemoryScreen({ theme, onUseAsTemplate, onOpenInsights })
       )}
 
       <StatsPanel theme={theme} stats={stats} loading={!stats && !error} />
+
+      <FeedbackIntelPanel theme={theme} />
 
       {runs === null && !error && <SkeletonRuns theme={theme} />}
       {runs !== null && runs.length === 0 && <EmptyState theme={theme} />}

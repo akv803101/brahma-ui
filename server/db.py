@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import (
-    Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine,
+    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
@@ -92,14 +92,49 @@ class Membership(Base):
 class Project(Base):
     __tablename__ = "projects"
 
-    id             = Column(Integer, primary_key=True)
-    workspace_id   = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
-    name           = Column(String(120), nullable=False)
-    scenario_type  = Column(String(32),  nullable=True)  # optional preselect: churn|ltv|... or null
-    description    = Column(Text,        nullable=True)
-    created_at     = Column(DateTime, default=datetime.utcnow, nullable=False)
+    id                 = Column(Integer, primary_key=True)
+    workspace_id       = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name               = Column(String(120), nullable=False)
+    scenario_type      = Column(String(32),  nullable=True)  # optional preselect: churn|ltv|... or null
+    description        = Column(Text,        nullable=True)
+    created_at         = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Brahma's "intelligence" tracking — bumps when feedback triggers a recalibration
+    model_version       = Column(String(16), nullable=False, default="v1.0.0")
+    last_calibrated_at  = Column(DateTime, nullable=True)
 
     workspace      = relationship("Workspace", back_populates="projects")
+
+
+class Feedback(Base):
+    """
+    Human-in-the-loop signal — each row is a prediction + the human verdict on it.
+    Together they fuel the Memory tab's accuracy panel and trigger the
+    "recalibrate" loop on Project.model_version.
+
+    No predictions are logged automatically. A feedback row only exists when
+    a human pressed ✓ Yes or ✗ No on the Live Predict screen.
+    """
+
+    __tablename__ = "feedback"
+
+    id              = Column(Integer, primary_key=True)
+    run_id          = Column(String(32), ForeignKey("pipeline_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id      = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id         = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    scenario_id     = Column(String(32), nullable=False, index=True)
+
+    inputs_json     = Column(Text, nullable=False)         # serialized slider state
+    predicted_score = Column(Float, nullable=False)
+    predicted_label = Column(String(64), nullable=True)    # e.g. "CHURN RISK"
+    predicted_tier  = Column(String(32), nullable=True)    # e.g. "HIGH" / "ANOMALY" / cluster name
+
+    was_correct     = Column(Boolean, nullable=False)
+    actual_value    = Column(Text, nullable=True)          # text — accommodates string, number, cluster id
+    note            = Column(Text, nullable=True)
+
+    model_version   = Column(String(16), nullable=True)    # snapshot at time of feedback
+    created_at      = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class PipelineRun(Base):

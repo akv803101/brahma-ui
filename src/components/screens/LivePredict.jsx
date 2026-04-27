@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useCountUp } from '../../theme/useTheme.js';
+import FeedbackWidget from './FeedbackWidget.jsx';
 
 /**
  * Live Predict screen — left column: sliders, right column: result panel.
@@ -31,7 +32,8 @@ export default function LivePredict({ scenario, theme }) {
   const isDark = theme.bg === '#0B1020';
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, padding: '4px 0' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 0' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
       {/* LEFT · sliders */}
       <div
         style={{
@@ -177,6 +179,16 @@ export default function LivePredict({ scenario, theme }) {
           {result.recommendation}
         </div>
       </div>
+    </div>
+
+    <FeedbackWidget
+      scenario={scenario}
+      theme={theme}
+      currentInputs={state}
+      predictedScore={score}
+      predictedLabel={result.label}
+      predictedTier={result.tier}
+    />
     </div>
   );
 }
