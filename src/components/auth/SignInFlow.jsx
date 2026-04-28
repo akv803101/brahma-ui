@@ -120,11 +120,11 @@ function SignIn({ theme, onLogin, onGoogle, googleEnabled, switchTo, oauthMessag
 
       <AuthInput
         theme={theme}
-        label="Work email"
+        label="Email"
         type="email"
         value={email}
         onChange={setEmail}
-        placeholder="you@company.com"
+        placeholder="you@example.com"
         autoComplete="email"
         autoFocus
         required
@@ -215,11 +215,11 @@ function SignUp({ theme, onSignup, onGoogle, googleEnabled, switchTo }) {
 
       <AuthInput
         theme={theme}
-        label="Work email"
+        label="Email"
         type="email"
         value={email}
         onChange={setEmail}
-        placeholder="anika@acme.com"
+        placeholder="you@example.com"
         autoComplete="email"
         required
         mono
@@ -297,11 +297,11 @@ function Forgot({ theme, switchTo }) {
 
           <AuthInput
             theme={theme}
-            label="Work email"
+            label="Email"
             type="email"
             value={email}
             onChange={setEmail}
-            placeholder="you@company.com"
+            placeholder="you@example.com"
             autoComplete="email"
             autoFocus
             required

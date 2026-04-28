@@ -252,14 +252,30 @@ export function CreateProjectScreen({ theme }) {
   );
 }
 
+// Consumer email stems — covers all country variants
+// (yahoo.com, yahoo.in, yahoo.co.uk, yahoo.fr, etc).
+// For these, suggest "{Name}'s workspace" instead of "Gmail Analytics".
+const CONSUMER_EMAIL_STEMS = new Set([
+  'gmail', 'googlemail', 'ymail', 'rocketmail',
+  'yahoo', 'outlook', 'hotmail', 'live', 'msn',
+  'icloud', 'me', 'mac', 'proton', 'protonmail', 'pm',
+  'aol', 'mail', 'gmx', 'fastmail', 'tutanota',
+  'zoho', 'yandex', 'inbox', 'rediffmail',
+]);
+
 function suggestWorkspaceName(user) {
   if (!user) return '';
-  // Prefer the email domain — "Acme Analytics" from "anika@acme.com" → "Acme"
-  const domain = (user.email || '').split('@')[1] || '';
+
+  const firstName = (user.name || '').trim().split(/\s+/)[0];
+  const domain = (user.email || '').toLowerCase().split('@')[1] || '';
   const root = domain.split('.')[0] || '';
-  if (!root || root.length < 2) {
-    return user.name ? `${user.name}'s workspace` : '';
+
+  // Individual sign-up → name-based workspace
+  if (CONSUMER_EMAIL_STEMS.has(root) || !root || root.length < 2) {
+    return firstName ? `${firstName}'s workspace` : 'My workspace';
   }
+
+  // Company domain → "{Capitalized} Analytics"
   const cap = root.charAt(0).toUpperCase() + root.slice(1);
   return `${cap} Analytics`;
 }
