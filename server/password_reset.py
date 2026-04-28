@@ -137,15 +137,20 @@ def forgot(
     response.status_code = status.HTTP_204_NO_CONTENT
 
     if not email_shape_ok(body.email):
+        log.info("forgot: rejected — bad email shape")
         return response
     try:
         email = validate_email_strict(body.email)
     except HTTPException:
+        log.info("forgot: rejected — invalid email format")
         return response
 
     user = db.query(User).filter(User.email == email).first()
     if not user:
+        log.info("forgot: no account for that email — silent 204 (no enumeration)")
         return response
+
+    log.info("forgot: dispatching reset email to user_id=%d", user.id)
 
     token = secrets.token_urlsafe(32)
     db.add(
