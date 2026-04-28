@@ -18,3 +18,4 @@ venv/
 .claude/
 .DS_Store
 Thumbs.db
+runs/
