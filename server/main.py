@@ -368,6 +368,11 @@ LOG_FRAGMENTS: list[list[list[str]]] = [
 
 _RUNS: dict[str, dict[str, Any]] = {}
 
+# Tracks real-engine runs that have already been kicked off so EventSource
+# auto-reconnects don't spawn a second BrahmaRunner thread (which races on
+# the shared vendor/brahma/outputs/ directory and corrupts chart copies).
+_REAL_RUN_STARTED: set[str] = set()
+
 
 # ════════════════════════════════════════════════════════════════════════
 # FastAPI app
@@ -591,7 +596,18 @@ async def _real_event_generator(run_id: str, run: dict[str, Any]):
     Bridge BrahmaRunner's sync generator to async SSE.
     Producer thread calls runner.run() and pushes events into a queue;
     this async generator consumes from the queue and yields SSE events.
+
+    EventSource auto-reconnects: every reconnect lands here as a fresh
+    request. We dedupe by run_id so only the first call spawns the
+    runner. Reconnects after that just emit an `already_running` notice
+    and close — the existing producer thread continues populating the
+    run dir; the client should poll /report for the final state.
     """
+    if run_id in _REAL_RUN_STARTED:
+        yield {"event": "already_running", "data": _json({"run_id": run_id})}
+        return
+    _REAL_RUN_STARTED.add(run_id)
+
     from .brahma_runner import BrahmaRunner
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -689,6 +705,72 @@ def _mark_run_complete(run_id: str, scenario: dict) -> None:
         session.close()
 
 
+_CHART_TITLES = {
+    "roc_curve": "ROC Curve",
+    "precision_recall_curve": "Precision–Recall Curve",
+    "confusion_matrix": "Confusion Matrix",
+    "calibration_curve": "Calibration",
+    "score_distribution": "Score Distribution",
+    "shap_beeswarm": "SHAP Feature Impact",
+    "feature_importance_top20": "Top 20 Feature Importance",
+    "learning_curve_xgb_tuned": "Learning Curve (XGB tuned)",
+    "optuna_history": "Optuna Tuning History",
+    "cv_and_threshold": "Cross-Validation & Threshold",
+    "ensemble_comparison": "Ensemble vs Single Models",
+    "eda_correlation_heatmap": "Correlation Heatmap",
+    "eda_feature_correlations": "Top Feature Correlations",
+    "eda_target_distribution": "Target Distribution",
+    "residuals_vs_predicted": "Residuals vs Predicted",
+    "actual_vs_predicted": "Actual vs Predicted",
+    "forecast_90d": "90-Day Forecast",
+    "mape_by_horizon": "MAPE by Horizon",
+    "cluster_distribution": "Cluster Distribution",
+    "silhouette": "Silhouette by Cluster",
+    "elbow": "Elbow / k Selection",
+    "anomaly_histogram": "Anomaly Score Distribution",
+    "self_training_auc": "Self-Training AUC",
+    "confidence_distribution": "Confidence Distribution",
+}
+
+# Order categories by what makes the most sense in a Report scroll
+_CATEGORY_ORDER = ["evaluation", "validation", "training", "ensembling", "eda"]
+
+
+def _humanize_chart_kind(kind: str) -> str:
+    if kind in _CHART_TITLES:
+        return _CHART_TITLES[kind]
+    # Strip "eda_" prefix and "_top20" suffix; title-case the rest
+    name = kind.removeprefix("eda_").removesuffix("_top20").replace("_", " ")
+    return name[:1].upper() + name[1:] if name else kind
+
+
+def _enumerate_charts(out_root: Path) -> list[dict[str, str]]:
+    """
+    Walk outputs/charts/{category}/*.png and return a list of
+    {kind, title, category, path} entries — path is relative to outputs/
+    so the frontend can build /api/pipelines/{id}/files/{path}.
+    """
+    charts_dir = out_root / "charts"
+    if not charts_dir.exists():
+        return []
+    items: list[dict[str, str]] = []
+    for png in charts_dir.rglob("*.png"):
+        rel = png.relative_to(out_root)
+        category = png.parent.name
+        kind = png.stem
+        items.append({
+            "kind": kind,
+            "title": _humanize_chart_kind(kind),
+            "category": category,
+            "path": str(rel).replace("\\", "/"),
+        })
+    items.sort(key=lambda c: (
+        _CATEGORY_ORDER.index(c["category"]) if c["category"] in _CATEGORY_ORDER else 99,
+        c["kind"],
+    ))
+    return items
+
+
 @app.get("/api/pipelines/{run_id}/files/{file_path:path}")
 def get_run_file(
     run_id: str,
@@ -751,6 +833,7 @@ def get_report(
         out_root = run_dir / "outputs"
         if out_root.exists():
             files = [str(p.relative_to(out_root)).replace("\\", "/") for p in sorted(out_root.rglob("*")) if p.is_file()]
+        charts = _enumerate_charts(out_root)
         return {
             "runId": run_id,
             "mode": "real",
@@ -758,6 +841,7 @@ def get_report(
             "narrative": narrative,
             "leaderboard": leaderboard,
             "files": files,
+            "charts": charts,
         }
     scenario = SCENARIOS[run["scenarioId"]]
     return {

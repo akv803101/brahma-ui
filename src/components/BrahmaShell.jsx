@@ -6,7 +6,7 @@ import TweaksPanel from './TweaksPanel.jsx';
 import { ConnectScreen, RunningScreen, LivePredict, MemoryScreen } from './screens';
 import { ReportLayoutA, ReportLayoutB, ReportLayoutC } from './report';
 import { PulseDot, BrahmaMark } from './primitives';
-import { useAuth, pipelinesApi, ApiError } from '../auth';
+import { useAuth, pipelinesApi, ApiError, useReport } from '../auth';
 
 // Lazy-load the Insights deck — defers framer-motion (~200 KB) and the deck
 // data (~80 slide configs) until the user opens the Insights tab.
@@ -82,6 +82,10 @@ export default function BrahmaShell() {
   const scenario = SCENARIOS[tweaks.scenario] || SCENARIOS.churn;
   const stages = getStagesForScenario(scenario);
   const theme = useTheme(tweaks.primaryColor, tweaks.dark);
+
+  // Fetch the real-engine report once the run lands on the Report tab.
+  const reportRunId = realRunId && (screen === 'report' || screen === 'insights') ? realRunId : null;
+  const { report } = useReport(reportRunId);
 
   // Reset stageIdx when scenario changes
   useEffect(() => {
@@ -189,6 +193,8 @@ export default function BrahmaShell() {
             scenario={scenario}
             theme={theme}
             stageIdx={tweaks.stageIdx}
+            report={report}
+            runId={realRunId}
           />
         );
       case 'insights':
