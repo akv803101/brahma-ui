@@ -42,12 +42,13 @@ services:
     startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
 
-    # 1 GB persistent disk for the SQLite database. Survives deploys +
-    # restarts. The DB file lives at $BRAHMA_DB_PATH (configured below).
-    disk:
-      name: brahma-data
-      mountPath: /opt/render/project/src/server/data
-      sizeGB: 1
+    # Render dropped persistent disks from the free tier. Two options:
+    #   1. Leave DATABASE_URL empty → ephemeral SQLite (good for demo;
+    #      data resets when the service spins down after 15min inactivity).
+    #   2. Set DATABASE_URL to a Neon / Render / Railway Postgres URL →
+    #      data persists forever. Free tier on Neon: 0.5 GB, no card needed.
+    #
+    # Either way, no disk block here.
 
     envVars:
       - key: PYTHON_VERSION
@@ -83,9 +84,12 @@ services:
       - key: BACKEND_ORIGIN
         value: https://brahma-ui.onrender.com
 
-      # ── SQLite path — points to the persistent disk so data survives ──
-      - key: BRAHMA_DB_PATH
-        value: /opt/render/project/src/server/data/brahma.db
+      # ── Database ──
+      # Leave empty for ephemeral SQLite (default).
+      # Set to a Postgres connection string (e.g. from Neon) for persistent data.
+      # Format: postgresql://user:pass@host/dbname?sslmode=require
+      - key: DATABASE_URL
+        sync: false
 
       # ── Email (Resend) — optional; without it, reset links log to stdout ──
       - key: RESEND_API_KEY

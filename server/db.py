@@ -26,18 +26,35 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
 
-# Allow override via env var so the prod deployment can point at a
-# persistent disk path. Falls back to server/brahma.db locally.
-_DB_DIR = Path(__file__).resolve().parent
-_DB_PATH = Path(os.getenv("BRAHMA_DB_PATH") or (_DB_DIR / "brahma.db"))
-_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-_DB_URL = f"sqlite:///{_DB_PATH}"
+# DB selection priority:
+#   1. $DATABASE_URL  — external Postgres / MySQL / etc.
+#                       (e.g. Neon, Railway, Render Postgres). Persistent.
+#   2. $BRAHMA_DB_PATH — explicit SQLite file path (e.g. mounted disk)
+#   3. server/brahma.db — local dev default. Ephemeral on free Render.
 
-engine = create_engine(
-    _DB_URL,
-    connect_args={"check_same_thread": False},  # FastAPI's threadpool can hop threads
-    future=True,
-)
+_DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+
+if _DATABASE_URL:
+    # SQLAlchemy 2.0 wants postgresql://, but most providers hand out postgres://
+    if _DATABASE_URL.startswith("postgres://"):
+        _DATABASE_URL = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    _DB_URL = _DATABASE_URL
+    engine = create_engine(
+        _DB_URL,
+        pool_pre_ping=True,    # auto-recycle dead connections (Neon idle close)
+        pool_recycle=300,
+        future=True,
+    )
+else:
+    _DB_DIR = Path(__file__).resolve().parent
+    _DB_PATH = Path(os.getenv("BRAHMA_DB_PATH") or (_DB_DIR / "brahma.db"))
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _DB_URL = f"sqlite:///{_DB_PATH}"
+    engine = create_engine(
+        _DB_URL,
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
