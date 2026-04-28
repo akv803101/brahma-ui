@@ -9,4 +9,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+# override=True so values in .env beat any pre-existing (often blank) shell vars.
+# In production (Render) there's no .env file — env vars come straight from the platform.
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
