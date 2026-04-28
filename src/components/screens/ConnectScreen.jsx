@@ -201,7 +201,7 @@ function StepCard({ theme, n, title, children, done = false, disabled = false })
   );
 }
 
-export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate }) {
+export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate, starting = false, startError = null }) {
   const isDark = theme.bg === '#0B1020';
   const [sourceId, setSourceId] = useState('csv');
   const source = DATA_SOURCES.find((s) => s.id === sourceId) || DATA_SOURCES[0];
@@ -501,31 +501,48 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate 
           I will run {stages.length} stages — {stages.slice(0, -1).map((s) => s.name.toLowerCase()).join(', ')}, and {stages[stages.length - 1].name.toLowerCase()}. Training will compare {scenario.models.length} candidate {scenario.problemType === 'clustering' || scenario.problemType === 'anomaly' ? 'algorithms' : 'models'} with Optuna (50 trials each). Expect ~4 minutes on this dataset. You will see every step live.
         </div>
 
+        {startError && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: '10px 14px',
+              borderRadius: 10,
+              background: isDark ? '#7F1D1D33' : '#FEE2E2',
+              color: isDark ? '#FCA5A5' : '#991B1B',
+              fontSize: 12,
+              fontFamily: 'var(--font-mono)',
+              border: `1px solid ${isDark ? '#FCA5A555' : '#FCA5A5'}`,
+            }}
+          >
+            {startError}
+          </div>
+        )}
+
         <button
           onClick={onStart}
-          disabled={!step2Done}
+          disabled={!step2Done || starting}
           style={{
             marginTop: 18,
-            background: step2Done ? theme.primary : theme.border,
+            background: step2Done && !starting ? theme.primary : theme.border,
             color: '#fff',
             border: 'none',
-            cursor: step2Done ? 'pointer' : 'not-allowed',
+            cursor: step2Done && !starting ? 'pointer' : 'not-allowed',
             borderRadius: 10,
             padding: '14px 20px',
             fontSize: 15,
             fontWeight: 700,
             fontFamily: 'var(--font-sans)',
             letterSpacing: 0.1,
-            boxShadow: step2Done ? `0 6px 16px ${theme.primary}40` : 'none',
+            boxShadow: step2Done && !starting ? `0 6px 16px ${theme.primary}40` : 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             gap: 8,
             width: '100%',
-            opacity: step2Done ? 1 : 0.6,
+            opacity: step2Done ? (starting ? 0.7 : 1) : 0.6,
           }}
         >
-          Start the pipeline <span style={{ fontSize: 18 }}>→</span>
+          {starting ? 'Starting…' : 'Start the pipeline'} <span style={{ fontSize: 18 }}>→</span>
         </button>
       </StepCard>
     </div>

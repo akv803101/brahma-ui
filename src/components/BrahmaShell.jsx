@@ -6,7 +6,7 @@ import TweaksPanel from './TweaksPanel.jsx';
 import { ConnectScreen, RunningScreen, LivePredict, MemoryScreen } from './screens';
 import { ReportLayoutA, ReportLayoutB, ReportLayoutC } from './report';
 import { PulseDot, BrahmaMark } from './primitives';
-import { useAuth } from '../auth';
+import { useAuth, pipelinesApi, ApiError } from '../auth';
 
 // Lazy-load the Insights deck — defers framer-motion (~200 KB) and the deck
 // data (~80 slide configs) until the user opens the Insights tab.
@@ -45,6 +45,9 @@ function loadTweaks() {
 
 export default function BrahmaShell() {
   const { currentProject } = useAuth();
+  const [realRunId, setRealRunId] = useState(null);
+  const [startError, setStartError] = useState(null);
+  const [starting, setStarting] = useState(false);
 
   // If the project has a scenario_type set, prefer that on first load
   const [tweaks, setTweaksState] = useState(() => {
@@ -85,10 +88,11 @@ export default function BrahmaShell() {
     setTweaksState((prev) => ({ ...prev, stageIdx: 0 }));
   }, [tweaks.scenario]);
 
-  // Auto-advance stages while Running screen is open
+  // Mock auto-advance — disabled when a real run is active.
+  // Kept for back-compat scenario demos until D2c removes it entirely.
   const intervalRef = useRef(null);
   useEffect(() => {
-    if (screen !== 'running') {
+    if (screen !== 'running' || realRunId) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       return;
     }
@@ -105,7 +109,7 @@ export default function BrahmaShell() {
       });
     }, 700);
     return () => clearInterval(intervalRef.current);
-  }, [screen, stages.length, tweaks.stageIdx, tweaks.scenario]);
+  }, [screen, stages.length, tweaks.stageIdx, tweaks.scenario, realRunId]);
 
   const ReportComponent = REPORT_LAYOUTS[tweaks.layout] || ReportLayoutA;
 
@@ -113,6 +117,38 @@ export default function BrahmaShell() {
     if (run?.scenario_id && SCENARIOS[run.scenario_id]) {
       setTweaks({ scenario: run.scenario_id, stageIdx: 0 });
       setScreen('connect');
+    }
+  };
+
+  /**
+   * Real-engine start. Posts to /api/pipelines with sourceConfig.type='file'
+   * pointing at the bundled credit_card_customers.csv (D2 scope: single source;
+   * E adds Postgres, F adds Snowflake/BigQuery/S3/Sheets/REST).
+   */
+  const startRealRun = async () => {
+    if (!currentProject) {
+      setStartError('Pick a project first.');
+      return;
+    }
+    setStartError(null);
+    setStarting(true);
+    try {
+      const result = await pipelinesApi.start({
+        projectId: currentProject.id,
+        goal: scenario.goal,
+        sourceConfig: {
+          type: 'file',
+          filename: 'credit_card_customers.csv',
+          temp_path: 'data/credit_card_customers.csv',
+        },
+      });
+      setRealRunId(result.runId);
+      setTweaks({ stageIdx: 0 });
+      setScreen('running');
+    } catch (e) {
+      setStartError(e instanceof ApiError ? e.message : 'Failed to start pipeline.');
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -131,10 +167,9 @@ export default function BrahmaShell() {
           <ConnectScreen
             scenario={scenario}
             theme={theme}
-            onStart={() => {
-              setTweaks({ stageIdx: 0 });
-              setScreen('running');
-            }}
+            onStart={startRealRun}
+            starting={starting}
+            startError={startError}
             onUseTemplate={useRunAsTemplate}
           />
         );
@@ -144,6 +179,7 @@ export default function BrahmaShell() {
             scenario={scenario}
             theme={theme}
             stageIdx={tweaks.stageIdx}
+            runId={realRunId}
             onComplete={() => setScreen('report')}
           />
         );
