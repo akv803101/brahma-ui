@@ -70,6 +70,35 @@ export const feedbackApi = {
     request(`/feedback/recalibrate${qs({ projectId })}`, { method: 'POST' }),
 };
 
+/**
+ * Real-engine pipeline endpoints.
+ *
+ * Sending sourceConfig.type triggers the BrahmaRunner backend path
+ * (real Claude + real ML stages). Without sourceConfig.type, the
+ * backend falls back to the scenario mock (back-compat, will be removed
+ * once the UI is fully dataset-adaptive).
+ */
+export const pipelinesApi = {
+  start: (body) =>
+    request('/pipelines', { method: 'POST', body: JSON.stringify(body) }),
+  getReport: (runId) =>
+    request(`/pipelines/${encodeURIComponent(runId)}/report`),
+  predict: (runId, inputs) =>
+    request(`/pipelines/${encodeURIComponent(runId)}/predict`, {
+      method: 'POST',
+      body: JSON.stringify({ inputs }),
+    }),
+  /**
+   * URL string for an output file. Use directly in <img src="...">.
+   * Cookie auth flows automatically since same-origin via Vite proxy.
+   */
+  fileUrl: (runId, path) =>
+    `/api/pipelines/${encodeURIComponent(runId)}/files/${path
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}`,
+};
+
 export const healthApi = {
   get: () => request('/health'),
 };
