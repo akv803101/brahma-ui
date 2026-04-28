@@ -428,6 +428,8 @@ def health() -> dict[str, Any]:
         "scenarios": list(SCENARIOS.keys()),
         "runs": len(_RUNS),
         "google_oauth": bool(GOOGLE_CLIENT_ID),
+        "resend_configured": bool(os.getenv("RESEND_API_KEY", "").strip()),
+        "db": "postgres" if (os.getenv("DATABASE_URL") or "").strip() else "sqlite",
     }
 
 
