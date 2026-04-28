@@ -28,6 +28,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated, Any, Awaitable, Callable
 
+import asyncio
+import queue
+import threading
+
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -449,10 +453,17 @@ def start_pipeline(
     user: Annotated[User, Depends(current_user)],
     db: Annotated[Session, Depends(db_dependency)],
 ) -> dict[str, Any]:
-    if body.scenarioId not in SCENARIOS:
-        raise HTTPException(404, f"Unknown scenarioId: {body.scenarioId}")
+    """
+    Two modes of operation:
+      • Real engine: sourceConfig has a 'type' field. Runs upstream
+        BrahmaEngine on real data via BrahmaRunner. Returns runId + mode='real'.
+      • Mock: scenarioId only. Plays back the canned scenario animation.
+        Kept for back-compat; will be removed once the UI is dataset-adaptive.
+    """
+    src = body.sourceConfig or {}
+    is_real = bool(src.get("type"))
 
-    # If a projectId was supplied, verify the user is a member of its workspace
+    # Project membership check (same for both modes)
     if body.projectId is not None:
         project = db.query(Project).filter(Project.id == body.projectId).first()
         if not project:
@@ -468,30 +479,57 @@ def start_pipeline(
         if not is_member:
             raise HTTPException(403, "You are not a member of this project's workspace.")
 
-    scenario = SCENARIOS[body.scenarioId]
-    stages = STAGE_MAP[scenario["problemType"]]
     run_id = uuid.uuid4().hex[:12]
-    goal = body.goal or scenario["goal"]
-    source_type = (body.sourceConfig or {}).get("sourceId") or (body.sourceConfig or {}).get("type")
 
-    _RUNS[run_id] = {
-        "scenarioId": body.scenarioId,
-        "projectId": body.projectId,
-        "userId": user.id,
-        "goal": goal,
-        "sourceConfig": body.sourceConfig or {},
-        "totalStages": len(stages),
-        "startedAt": datetime.utcnow().isoformat() + "Z",
-        "currentStage": 0,
-    }
+    if is_real:
+        goal = body.goal or "Run pipeline on the provided data source"
+        source_type = src.get("type")
+        problem_type = "auto"  # Brahma decides
+        scenario_id = body.scenarioId  # may still be set for analytics
+        total_stages = 8  # 8 real stages in upstream STAGE_SCRIPTS
 
-    # Persist the run for memory / history
+        _RUNS[run_id] = {
+            "mode": "real",
+            "scenarioId": scenario_id,
+            "projectId": body.projectId,
+            "userId": user.id,
+            "goal": goal,
+            "sourceConfig": src,
+            "totalStages": total_stages,
+            "startedAt": datetime.utcnow().isoformat() + "Z",
+            "currentStage": 0,
+        }
+    else:
+        # Mock branch (back-compat)
+        if body.scenarioId not in SCENARIOS:
+            raise HTTPException(404, f"Unknown scenarioId: {body.scenarioId}")
+        scenario = SCENARIOS[body.scenarioId]
+        stages = STAGE_MAP[scenario["problemType"]]
+        goal = body.goal or scenario["goal"]
+        source_type = src.get("sourceId") or src.get("type")
+        problem_type = scenario["problemType"]
+        scenario_id = body.scenarioId
+        total_stages = len(stages)
+
+        _RUNS[run_id] = {
+            "mode": "mock",
+            "scenarioId": scenario_id,
+            "projectId": body.projectId,
+            "userId": user.id,
+            "goal": goal,
+            "sourceConfig": src,
+            "totalStages": total_stages,
+            "startedAt": datetime.utcnow().isoformat() + "Z",
+            "currentStage": 0,
+        }
+
+    # Persist the run for memory / history (same for both modes)
     db.add(
         PipelineRun(
             id=run_id,
             project_id=body.projectId,
-            scenario_id=body.scenarioId,
-            problem_type=scenario["problemType"],
+            scenario_id=scenario_id,
+            problem_type=problem_type,
             started_by=user.id,
             goal=goal,
             source_type=source_type,
@@ -502,10 +540,10 @@ def start_pipeline(
 
     return {
         "runId": run_id,
-        "scenarioId": body.scenarioId,
-        "problemType": scenario["problemType"],
-        "totalStages": len(stages),
-        "mode": "real-brahma" if USE_REAL_BRAHMA else "mock",
+        "scenarioId": scenario_id,
+        "problemType": problem_type,
+        "totalStages": total_stages,
+        "mode": "real" if is_real else "mock",
     }
 
 
@@ -520,43 +558,116 @@ async def stream_pipeline(
         raise HTTPException(403, "This run belongs to a different user.")
 
     run = _RUNS[run_id]
+    if run.get("mode") == "real":
+        return EventSourceResponse(_real_event_generator(run_id, run))
+    else:
+        return EventSourceResponse(_mock_event_generator(run_id, run))
+
+
+async def _mock_event_generator(run_id: str, run: dict[str, Any]):
+    """Original scenario-based mock — back-compat only."""
     scenario = SCENARIOS[run["scenarioId"]]
     stages = STAGE_MAP[scenario["problemType"]]
 
-    async def event_generator():
-        for i, stage in enumerate(stages):
-            run["currentStage"] = i + 1
-            yield {
-                "event": "stage",
-                "data": _json({"index": i, "status": "started", **stage}),
-            }
-            # 1–2 ambient log lines per stage, throttled to feel like a real run
-            for _ in range(2):
-                frag = LOG_FRAGMENTS[(i * 2 + _) % len(LOG_FRAGMENTS)]
-                yield {
-                    "event": "log",
-                    "data": _json({"ts": _ts(), "parts": frag}),
-                }
-                await asyncio.sleep(0.18)
-            yield {
-                "event": "stage",
-                "data": _json({"index": i, "status": "done", **stage}),
-            }
-            await asyncio.sleep(0.25)
+    for i, stage in enumerate(stages):
+        run["currentStage"] = i + 1
+        yield {"event": "stage", "data": _json({"index": i, "status": "started", **stage})}
+        for _ in range(2):
+            frag = LOG_FRAGMENTS[(i * 2 + _) % len(LOG_FRAGMENTS)]
+            yield {"event": "log", "data": _json({"ts": _ts(), "parts": frag})}
+            await asyncio.sleep(0.18)
+        yield {"event": "stage", "data": _json({"index": i, "status": "done", **stage})}
+        await asyncio.sleep(0.25)
 
-        # Mark the persisted run as complete with primary-metric snapshot
-        _mark_run_complete(run_id, scenario)
+    _mark_run_complete(run_id, scenario)
+    yield {
+        "event": "done",
+        "data": _json({"runId": run_id, "finalModel": scenario["finalModel"], "kpis": scenario["kpis"]}),
+    }
 
-        yield {
-            "event": "done",
-            "data": _json({
-                "runId": run_id,
-                "finalModel": scenario["finalModel"],
-                "kpis": scenario["kpis"],
-            }),
-        }
 
-    return EventSourceResponse(event_generator())
+async def _real_event_generator(run_id: str, run: dict[str, Any]):
+    """
+    Bridge BrahmaRunner's sync generator to async SSE.
+    Producer thread calls runner.run() and pushes events into a queue;
+    this async generator consumes from the queue and yields SSE events.
+    """
+    from .brahma_runner import BrahmaRunner
+
+    repo_root = Path(__file__).resolve().parent.parent
+    runs_root = repo_root / "runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
+
+    q: queue.Queue = queue.Queue()
+    SENTINEL = object()
+
+    def producer():
+        try:
+            runner = BrahmaRunner()
+            for event in runner.run(
+                run_id=run_id,
+                goal=run["goal"],
+                connection_config=run["sourceConfig"],
+                out_root=runs_root,
+            ):
+                q.put(event)
+        except Exception as e:  # noqa: BLE001
+            q.put({"event": "fatal", "error": str(e), "type": type(e).__name__})
+        finally:
+            q.put(SENTINEL)
+
+    thread = threading.Thread(target=producer, daemon=True)
+    thread.start()
+
+    leaderboard_rows: list[dict[str, Any]] | None = None
+    while True:
+        item = await asyncio.to_thread(q.get)
+        if item is SENTINEL:
+            break
+
+        kind = item.get("event", "message")
+        # Track leaderboard so we can update DB at end
+        if kind == "leaderboard":
+            leaderboard_rows = item.get("rows")
+        # Track current stage for back-compat with our existing UI logic
+        if kind == "stage_done":
+            run["currentStage"] = item.get("index", -1) + 1
+
+        yield {"event": kind, "data": _json(item)}
+
+    # Mark run complete in DB. Pull primary metric from leaderboard if available.
+    _mark_real_run_complete(run_id, leaderboard_rows)
+
+
+def _mark_real_run_complete(run_id: str, leaderboard_rows: list[dict[str, Any]] | None) -> None:
+    """Update the persistent PipelineRun row at the end of a real engine run."""
+    from .db import SessionLocal
+    session = SessionLocal()
+    try:
+        row = session.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+        if not row:
+            return
+        row.status = "complete"
+        row.completed_at = datetime.utcnow()
+
+        if leaderboard_rows:
+            # Pick the row with highest auc_val (or first row's primary metric)
+            best = max(
+                leaderboard_rows,
+                key=lambda r: r.get("auc_val") or r.get("auc") or 0,
+            )
+            row.best_model = str(best.get("model", "")) or None
+            for metric_key in ("auc_val", "auc", "f1_val", "r2", "silhouette"):
+                if metric_key in best and best[metric_key] is not None:
+                    row.primary_metric = metric_key
+                    try:
+                        row.primary_value = float(best[metric_key])
+                    except (TypeError, ValueError):
+                        pass
+                    break
+        session.commit()
+    finally:
+        session.close()
 
 
 def _mark_run_complete(run_id: str, scenario: dict) -> None:
@@ -578,6 +689,38 @@ def _mark_run_complete(run_id: str, scenario: dict) -> None:
         session.close()
 
 
+@app.get("/api/pipelines/{run_id}/files/{file_path:path}")
+def get_run_file(
+    run_id: str,
+    file_path: str,
+    user: Annotated[User, Depends(current_user)],
+):
+    """
+    Serve a file produced by a real-engine run.
+    Files live under runs/{run_id}/outputs/ (charts/*.png, models/*.pkl,
+    data/leaderboard.csv, etc.). Path traversal is rejected.
+    """
+    if run_id not in _RUNS:
+        raise HTTPException(404, f"Unknown run: {run_id}")
+    if _RUNS[run_id].get("userId") not in (None, user.id):
+        raise HTTPException(403, "This run belongs to a different user.")
+
+    repo_root = Path(__file__).resolve().parent.parent
+    run_dir = (repo_root / "runs" / run_id).resolve()
+    outputs_root = (run_dir / "outputs").resolve()
+
+    target = (outputs_root / file_path).resolve()
+    try:
+        target.relative_to(outputs_root)
+    except ValueError:
+        raise HTTPException(403, "Path traversal not allowed.")
+
+    if not target.is_file():
+        raise HTTPException(404, "File not found.")
+
+    return FileResponse(target)
+
+
 @app.get("/api/pipelines/{run_id}/report")
 def get_report(
     run_id: str,
@@ -588,6 +731,34 @@ def get_report(
     if _RUNS[run_id].get("userId") not in (None, user.id):
         raise HTTPException(403, "This run belongs to a different user.")
     run = _RUNS[run_id]
+    if run.get("mode") == "real":
+        # Read narrative + leaderboard + outputs file list from runs/{id}/
+        repo_root = Path(__file__).resolve().parent.parent
+        run_dir = repo_root / "runs" / run_id
+        narrative = ""
+        nm = run_dir / "narrative.md"
+        if nm.exists():
+            narrative = nm.read_text(encoding="utf-8")
+        leaderboard: list[dict[str, Any]] = []
+        lb = run_dir / "outputs" / "data" / "leaderboard.csv"
+        if lb.exists():
+            try:
+                import pandas as pd
+                leaderboard = pd.read_csv(lb).to_dict("records")
+            except Exception:  # noqa: BLE001
+                pass
+        files: list[str] = []
+        out_root = run_dir / "outputs"
+        if out_root.exists():
+            files = [str(p.relative_to(out_root)).replace("\\", "/") for p in sorted(out_root.rglob("*")) if p.is_file()]
+        return {
+            "runId": run_id,
+            "mode": "real",
+            "goal": run["goal"],
+            "narrative": narrative,
+            "leaderboard": leaderboard,
+            "files": files,
+        }
     scenario = SCENARIOS[run["scenarioId"]]
     return {
         "runId": run_id,
