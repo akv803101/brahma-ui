@@ -125,13 +125,20 @@ export default function BrahmaShell() {
   };
 
   /**
-   * Real-engine start. Posts to /api/pipelines with sourceConfig.type='file'
-   * pointing at the bundled credit_card_customers.csv (D2 scope: single source;
-   * E adds Postgres, F adds Snowflake/BigQuery/S3/Sheets/REST).
+   * Real-engine start. ConnectScreen passes the assembled sourceConfig
+   * + the user-edited goal once Test connection has gone green.
+   *
+   * In E1+, sourceConfig.type can be: file, postgresql, sqlite, snowflake,
+   * bigquery, s3, google_sheets, rest_api. The backend validates required
+   * fields per type.
    */
-  const startRealRun = async () => {
+  const startRealRun = async ({ sourceConfig, goal } = {}) => {
     if (!currentProject) {
       setStartError('Pick a project first.');
+      return;
+    }
+    if (!sourceConfig || !sourceConfig.type) {
+      setStartError('Connect a data source first.');
       return;
     }
     setStartError(null);
@@ -139,12 +146,8 @@ export default function BrahmaShell() {
     try {
       const result = await pipelinesApi.start({
         projectId: currentProject.id,
-        goal: scenario.goal,
-        sourceConfig: {
-          type: 'file',
-          filename: 'credit_card_customers.csv',
-          temp_path: 'data/credit_card_customers.csv',
-        },
+        goal: (goal && goal.trim()) || scenario.goal,
+        sourceConfig,
       });
       setRealRunId(result.runId);
       setTweaks({ stageIdx: 0 });

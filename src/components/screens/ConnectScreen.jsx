@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CheckIcon } from '../primitives/Icons.jsx';
 import { getStagesForScenario } from '../../data/scenarios.js';
 import SimilarRunsPanel from './SimilarRunsPanel.jsx';
+import { pipelinesApi, ApiError } from '../../auth';
 
 /**
  * Connect screen — three sequentially-gated steps:
@@ -12,75 +13,136 @@ import SimilarRunsPanel from './SimilarRunsPanel.jsx';
  * Source list mirrors the 9 enterprise data sources from the design system.
  */
 
+/**
+ * Each entry maps a UI choice → backend sourceConfig payload.
+ *  - id:      UI key (used by SourceIcon switch)
+ *  - label:   what the user sees in the dropdown
+ *  - hint:    one-line right-hand caption
+ *  - backend: the type sent to /api/pipelines (POST) and test-connection
+ *  - fields:  ordered list { key, label, def, secret?, placeholder? }
+ *             — `key` is the EXACT field name the backend expects
+ *  - liveProbe: true if /api/pipelines/test-connection actually probes
+ *               (file/postgresql/sqlite). Other sources validate only
+ *               in chunk E; live probes ship in chunk F.
+ */
 const DATA_SOURCES = [
   {
     id: 'csv',
     label: 'Local CSV file',
-    hint: './data/credit_card_customers.csv',
-    fields: [{ key: 'path', label: 'File path', def: './data/credit_card_customers.csv' }],
-  },
-  {
-    id: 'snowflake',
-    label: 'Snowflake',
-    hint: 'account · warehouse · table',
+    hint: 'bundled credit_card_customers.csv',
+    backend: 'file',
+    liveProbe: true,
     fields: [
-      { key: 'account',   label: 'Account',   def: 'acme-prod.us-east-1' },
-      { key: 'warehouse', label: 'Warehouse', def: 'ANALYTICS_WH' },
-      { key: 'table',     label: 'Table',     def: 'CUSTOMERS.PROD.CREDIT_CARD' },
+      { key: 'filename',  label: 'Filename',                       def: 'credit_card_customers.csv' },
+      { key: 'temp_path', label: 'Path (relative to vendor/brahma)', def: 'data/credit_card_customers.csv' },
     ],
   },
   {
     id: 'postgres',
     label: 'PostgreSQL',
-    hint: 'connection string',
+    hint: 'host · db · table',
+    backend: 'postgresql',
+    liveProbe: true,
     fields: [
-      { key: 'conn',  label: 'Connection string', def: 'postgres://analytics@db.prod:5432/warehouse' },
-      { key: 'table', label: 'Table',             def: 'public.credit_card_customers' },
+      { key: 'host',           label: 'Host',           def: 'localhost' },
+      { key: 'port',           label: 'Port',           def: '5432' },
+      { key: 'database',       label: 'Database',       def: 'analytics' },
+      { key: 'user',           label: 'User',           def: 'postgres' },
+      { key: 'password',       label: 'Password',       def: '', secret: true },
+      { key: 'table_or_query', label: 'Table or SELECT', def: 'public.credit_card_customers' },
+    ],
+  },
+  {
+    id: 'sqlite',
+    label: 'SQLite (local)',
+    hint: 'absolute path · table',
+    backend: 'sqlite',
+    liveProbe: true,
+    fields: [
+      { key: 'path',           label: 'DB path', def: '' },
+      { key: 'table_or_query', label: 'Table',   def: 'users' },
+    ],
+  },
+  {
+    id: 'snowflake',
+    label: 'Snowflake (validation only)',
+    hint: 'shipping in chunk F',
+    backend: 'snowflake',
+    liveProbe: false,
+    fields: [
+      { key: 'account',        label: 'Account',         def: 'acme-prod.us-east-1' },
+      { key: 'user',           label: 'User',            def: '' },
+      { key: 'password',       label: 'Password',        def: '', secret: true },
+      { key: 'warehouse',      label: 'Warehouse',       def: 'ANALYTICS_WH' },
+      { key: 'database',       label: 'Database',        def: '' },
+      { key: 'schema',         label: 'Schema',          def: 'PUBLIC' },
+      { key: 'table_or_query', label: 'Table or SELECT', def: 'CUSTOMERS' },
     ],
   },
   {
     id: 'bigquery',
-    label: 'BigQuery',
-    hint: 'project.dataset.table',
-    fields: [{ key: 'table', label: 'Fully qualified table', def: 'acme-analytics.prod.credit_card_customers' }],
-  },
-  {
-    id: 'databricks',
-    label: 'Databricks (Unity Catalog)',
-    hint: 'catalog.schema.table',
+    label: 'BigQuery (validation only)',
+    hint: 'shipping in chunk F',
+    backend: 'bigquery',
+    liveProbe: false,
     fields: [
-      { key: 'table',     label: 'Table',         def: 'main.prod.credit_card_customers' },
-      { key: 'warehouse', label: 'SQL warehouse', def: 'serverless-xl' },
+      { key: 'project',          label: 'Project',          def: '' },
+      { key: 'dataset',          label: 'Dataset',          def: '' },
+      { key: 'table_or_query',   label: 'Table or SELECT',  def: '' },
+      { key: 'credentials_json', label: 'Service account JSON', def: '', secret: true },
     ],
   },
   {
     id: 's3',
-    label: 'Amazon S3 (parquet)',
-    hint: 's3://bucket/key',
-    fields: [{ key: 'uri', label: 'S3 URI', def: 's3://acme-lake/curated/credit_card_customers/' }],
-  },
-  {
-    id: 'redshift',
-    label: 'Amazon Redshift',
-    hint: 'cluster · schema · table',
+    label: 'Amazon S3 (validation only)',
+    hint: 'shipping in chunk F',
+    backend: 's3',
+    liveProbe: false,
     fields: [
-      { key: 'cluster', label: 'Cluster endpoint', def: 'acme-dwh.xxxxx.redshift.amazonaws.com' },
-      { key: 'table',   label: 'Table',            def: 'analytics.credit_card_customers' },
+      { key: 'bucket',      label: 'Bucket',      def: '' },
+      { key: 'key',         label: 'Key',         def: '' },
+      { key: 'region',      label: 'Region',      def: 'us-east-1' },
+      { key: 'file_format', label: 'Format',      def: 'parquet' },
+      { key: 'access_key',  label: 'Access key',  def: '' },
+      { key: 'secret_key',  label: 'Secret key',  def: '', secret: true },
     ],
   },
   {
     id: 'gsheet',
-    label: 'Google Sheet',
-    hint: 'share link',
-    fields: [{ key: 'url', label: 'Sheet URL', def: 'https://docs.google.com/spreadsheets/d/1AB.../' }],
+    label: 'Google Sheets (validation only)',
+    hint: 'shipping in chunk F',
+    backend: 'google_sheets',
+    liveProbe: false,
+    fields: [
+      { key: 'url',              label: 'Sheet URL',            def: '' },
+      { key: 'tab',              label: 'Tab',                  def: 'Sheet1' },
+      { key: 'credentials_json', label: 'Service account JSON', def: '', secret: true },
+    ],
   },
   {
     id: 'api',
-    label: 'HTTP / REST endpoint',
-    hint: 'https URL',
-    fields: [{ key: 'url', label: 'Endpoint', def: 'https://api.acme.com/v2/customers' }],
+    label: 'HTTP / REST (validation only)',
+    hint: 'shipping in chunk F',
+    backend: 'rest_api',
+    liveProbe: false,
+    fields: [
+      { key: 'url',    label: 'Endpoint URL', def: 'https://api.example.com/v2/customers' },
+      { key: 'method', label: 'Method',       def: 'GET' },
+    ],
   },
 ];
+
+function buildSourceConfig(source, fieldVals) {
+  const cfg = { type: source.backend };
+  for (const f of source.fields) {
+    let v = fieldVals[f.key];
+    if (v === undefined || v === '') continue;
+    // Coerce port to number for postgres/mysql so backend's int() doesn't choke
+    if (f.key === 'port') v = Number(v) || v;
+    cfg[f.key] = v;
+  }
+  return cfg;
+}
 
 function SourceIcon({ id, color, size = 18 }) {
   const common = { width: size, height: size, style: { flexShrink: 0 } };
@@ -211,18 +273,46 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
   );
   useEffect(() => {
     setFieldVals(Object.fromEntries(source.fields.map((f) => [f.key, f.def])));
+    setProbe({ status: 'idle', message: '', sample: null });
   }, [sourceId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const [goal, setGoal] = useState(scenario.goal);
-  const [connected, setConnected] = useState(false);
+  // Probe state: { status: 'idle' | 'testing' | 'ok' | 'error', message, sample }
+  const [probe, setProbe] = useState({ status: 'idle', message: '', sample: null });
 
   useEffect(() => {
     setGoal(scenario.goal);
-    setConnected(false);
+    setProbe({ status: 'idle', message: '', sample: null });
   }, [scenario.id]);
 
+  const connected = probe.status === 'ok';
   const step1Done = connected;
   const step2Done = connected && goal.trim().length > 10;
+
+  const handleTestConnection = async () => {
+    setProbe({ status: 'testing', message: '', sample: null });
+    const sourceConfig = buildSourceConfig(source, fieldVals);
+    try {
+      const res = await pipelinesApi.testConnection({ sourceConfig });
+      setProbe({
+        status: res.ok ? 'ok' : 'error',
+        message: res.message || (res.ok ? 'Connected.' : 'Connection failed.'),
+        sample: res.sample || null,
+      });
+    } catch (e) {
+      setProbe({
+        status: 'error',
+        message: e instanceof ApiError ? e.message : 'Network error.',
+        sample: null,
+      });
+    }
+  };
+
+  const handleStart = () => {
+    if (!step2Done) return;
+    const sourceConfig = buildSourceConfig(source, fieldVals);
+    onStart?.({ sourceConfig, goal });
+  };
 
   const stages = getStagesForScenario(scenario);
   const inputBg = isDark ? '#0B1020' : '#F9FAFB';
@@ -339,10 +429,11 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
                 {f.label}
               </div>
               <input
+                type={f.secret ? 'password' : 'text'}
                 value={fieldVals[f.key] ?? ''}
                 onChange={(e) => {
                   setFieldVals((v) => ({ ...v, [f.key]: e.target.value }));
-                  setConnected(false);
+                  setProbe({ status: 'idle', message: '', sample: null });
                 }}
                 style={{
                   width: '100%',
@@ -361,34 +452,48 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
           ))}
         </div>
 
-        <button
-          onClick={() => setConnected(true)}
-          disabled={connected}
-          style={{
-            marginTop: 14,
-            background: connected ? (isDark ? '#14532D' : '#DCFCE7') : theme.card,
-            color: connected ? theme.pos : theme.fg,
-            border: `1px solid ${connected ? theme.pos + '55' : theme.border}`,
-            borderRadius: 8,
-            padding: '9px 14px',
-            fontSize: 12,
-            fontWeight: 700,
-            letterSpacing: 0.3,
-            cursor: connected ? 'default' : 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            fontFamily: 'var(--font-sans)',
-          }}
-        >
-          {connected ? (
-            <>
-              <CheckIcon color={theme.pos} /> Connected · {scenario.dataSize}
-            </>
-          ) : (
-            'Test connection'
+        <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <button
+            onClick={handleTestConnection}
+            disabled={probe.status === 'testing'}
+            style={{
+              background: connected ? (isDark ? '#14532D' : '#DCFCE7') : theme.card,
+              color: connected ? theme.pos : probe.status === 'error' ? theme.neg : theme.fg,
+              border: `1px solid ${
+                connected ? theme.pos + '55' : probe.status === 'error' ? theme.neg + '55' : theme.border
+              }`,
+              borderRadius: 8,
+              padding: '9px 14px',
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: 0.3,
+              cursor: probe.status === 'testing' ? 'wait' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              fontFamily: 'var(--font-sans)',
+            }}
+          >
+            {probe.status === 'testing' && <span>Testing…</span>}
+            {probe.status === 'ok' && <><CheckIcon color={theme.pos} /> Connected</>}
+            {probe.status === 'error' && <span>Retry</span>}
+            {probe.status === 'idle' && <span>Test connection</span>}
+          </button>
+          {probe.message && (
+            <span
+              style={{
+                fontSize: 11,
+                fontFamily: 'var(--font-mono)',
+                color:
+                  probe.status === 'ok' ? theme.pos : probe.status === 'error' ? theme.neg : theme.fg2,
+                maxWidth: 420,
+                wordBreak: 'break-word',
+              }}
+            >
+              {probe.message}
+            </span>
           )}
-        </button>
+        </div>
       </StepCard>
 
       {/* ─── STEP 2 · Goal ─────────────────────────────────────────── */}
@@ -519,7 +624,7 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
         )}
 
         <button
-          onClick={onStart}
+          onClick={handleStart}
           disabled={!step2Done || starting}
           style={{
             marginTop: 18,

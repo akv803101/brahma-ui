@@ -81,6 +81,8 @@ export const feedbackApi = {
 export const pipelinesApi = {
   start: (body) =>
     request('/pipelines', { method: 'POST', body: JSON.stringify(body) }),
+  testConnection: (body) =>
+    request('/pipelines/test-connection', { method: 'POST', body: JSON.stringify(body) }),
   getReport: (runId) =>
     request(`/pipelines/${encodeURIComponent(runId)}/report`),
   predict: (runId, inputs) =>
