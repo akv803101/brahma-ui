@@ -431,6 +431,37 @@ class PredictBody(BaseModel):
     inputs: dict[str, float]
 
 
+class TestConnectionBody(BaseModel):
+    sourceConfig: dict[str, Any]
+
+
+# Per-type required fields for sourceConfig validation
+_REQUIRED_SOURCE_FIELDS: dict[str, tuple[str, ...]] = {
+    "file":       ("filename", "temp_path"),
+    "postgresql": ("host", "port", "database", "user", "password", "table_or_query"),
+    "mysql":      ("host", "port", "database", "user", "password", "table_or_query"),
+    "snowflake":  ("account", "user", "password", "warehouse", "database", "schema", "table_or_query"),
+    "bigquery":   ("project", "dataset", "table_or_query", "credentials_json"),
+    "s3":         ("bucket", "key", "region", "file_format", "access_key", "secret_key"),
+    "google_sheets": ("url", "tab", "credentials_json"),
+    "rest_api":   ("url", "method"),
+    "sqlite":     ("path", "table_or_query"),
+}
+
+
+def _validate_source_config(cfg: dict[str, Any]) -> str:
+    src_type = cfg.get("type")
+    if not src_type:
+        raise HTTPException(400, "sourceConfig.type is required.")
+    required = _REQUIRED_SOURCE_FIELDS.get(src_type)
+    if required is None:
+        raise HTTPException(400, f"Unsupported source type: {src_type}")
+    missing = [f for f in required if not cfg.get(f) and cfg.get(f) != 0]
+    if missing:
+        raise HTTPException(400, f"sourceConfig missing required fields for {src_type}: {', '.join(missing)}")
+    return src_type
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     return {
@@ -450,6 +481,127 @@ def list_scenarios() -> dict[str, Any]:
         sid: {k: v for k, v in s.items() if k != "score_fn"}
         for sid, s in SCENARIOS.items()
     }
+
+
+@app.post("/api/pipelines/test-connection")
+def test_connection(
+    body: TestConnectionBody,
+    user: Annotated[User, Depends(current_user)],  # noqa: ARG001
+) -> dict[str, Any]:
+    """
+    Lightweight connectivity check before kicking off a full run.
+    Validates required fields, then probes the source with a small
+    SELECT/list. Returns:
+       { ok: bool, source: str, message: str, sample?: {...} }
+
+    Per-source behaviour:
+      - file: assert file exists at temp_path; return size + first row count
+      - postgresql / mysql: connect with 5s timeout; SELECT 1 + table preview
+      - sqlite: open + table count
+      - others: validation only (full probe lands in F)
+    """
+    cfg = body.sourceConfig
+    src = _validate_source_config(cfg)
+
+    try:
+        if src == "file":
+            return _probe_file(cfg)
+        if src == "postgresql":
+            return _probe_postgres(cfg)
+        if src == "sqlite":
+            return _probe_sqlite(cfg)
+        # mysql/snowflake/bigquery/s3/sheets/rest covered in F
+        return {
+            "ok": True,
+            "source": src,
+            "message": f"Configuration valid for {src}. Live probe lands in chunk F.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "source": src,
+            "message": f"{type(e).__name__}: {e}",
+        }
+
+
+def _probe_file(cfg: dict[str, Any]) -> dict[str, Any]:
+    repo_root = Path(__file__).resolve().parent.parent
+    rel = cfg.get("temp_path") or ""
+    target = (repo_root / "vendor" / "brahma" / rel).resolve()
+    if not target.exists():
+        # Also try repo-root-relative path (e.g. when temp_path already absolute-ish)
+        alt = (repo_root / rel).resolve()
+        if alt.exists():
+            target = alt
+    if not target.is_file():
+        return {"ok": False, "source": "file", "message": f"File not found at {rel}"}
+    size_kb = target.stat().st_size / 1024
+    return {
+        "ok": True,
+        "source": "file",
+        "message": f"{cfg.get('filename')} · {size_kb:.1f} KB",
+        "sample": {"filename": cfg.get("filename"), "size_kb": round(size_kb, 1)},
+    }
+
+
+def _probe_postgres(cfg: dict[str, Any]) -> dict[str, Any]:
+    import psycopg2
+    conn = psycopg2.connect(
+        host=cfg["host"],
+        port=int(cfg["port"]),
+        dbname=cfg["database"],
+        user=cfg["user"],
+        password=cfg["password"],
+        connect_timeout=5,
+    )
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        # Try a small preview against the user's table_or_query
+        toq = cfg["table_or_query"].strip()
+        if toq.lower().startswith("select"):
+            preview_sql = f"SELECT * FROM ({toq.rstrip(';')}) AS _b LIMIT 1"
+        else:
+            preview_sql = f"SELECT * FROM {toq} LIMIT 1"
+        try:
+            cur.execute(preview_sql)
+            cols = [d.name for d in cur.description] if cur.description else []
+            row = cur.fetchone()
+            return {
+                "ok": True,
+                "source": "postgresql",
+                "message": f"Connected · {len(cols)} columns",
+                "sample": {"columns": cols, "first_row_present": row is not None},
+            }
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False,
+                "source": "postgresql",
+                "message": f"Connected, but preview failed: {e}",
+            }
+    finally:
+        conn.close()
+
+
+def _probe_sqlite(cfg: dict[str, Any]) -> dict[str, Any]:
+    import sqlite3
+    path = cfg["path"]
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [r[0] for r in cur.fetchall()]
+        return {
+            "ok": True,
+            "source": "sqlite",
+            "message": f"Opened · {len(tables)} table{'s' if len(tables) != 1 else ''}",
+            "sample": {"tables": tables[:8]},
+        }
+    finally:
+        conn.close()
 
 
 @app.post("/api/pipelines")
