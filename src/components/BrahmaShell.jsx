@@ -231,7 +231,7 @@ export default function BrahmaShell() {
           </Suspense>
         );
       case 'live':
-        return <LivePredict scenario={scenario} theme={theme} />;
+        return <LivePredict scenario={scenario} theme={theme} runId={realRunId} />;
       case 'memory':
         return (
           <MemoryScreen

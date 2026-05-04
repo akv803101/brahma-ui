@@ -16,7 +16,7 @@ import FeedbackWidget from './FeedbackWidget.jsx';
  * derived from the input heuristic.
  */
 
-export default function LivePredict({ scenario, theme }) {
+export default function LivePredict({ scenario, theme, runId }) {
   const [state, setState] = useState(() =>
     Object.fromEntries(scenario.liveInputs.map((f) => [f.key, f.def]))
   );
@@ -184,6 +184,7 @@ export default function LivePredict({ scenario, theme }) {
     <FeedbackWidget
       scenario={scenario}
       theme={theme}
+      runId={runId}
       currentInputs={state}
       predictedScore={score}
       predictedLabel={result.label}

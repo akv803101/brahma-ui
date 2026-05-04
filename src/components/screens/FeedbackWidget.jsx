@@ -11,7 +11,7 @@ import { feedbackApi, useAuth, ApiError } from '../../auth';
  * a small mono caption shows "feedback logged · v{version} · accuracy NN%"
  * and a callback bubbles up to the parent so the page can refresh stats.
  */
-export default function FeedbackWidget({ scenario, theme, currentInputs, predictedScore, predictedLabel, predictedTier, onSubmitted }) {
+export default function FeedbackWidget({ scenario, theme, runId, currentInputs, predictedScore, predictedLabel, predictedTier, onSubmitted }) {
   const { currentProject, refresh: refreshAuth } = useAuth();
   const [phase, setPhase] = useState('idle');         // idle | correcting | submitting | done
   const [actualValue, setActualValue] = useState('');
@@ -49,6 +49,7 @@ export default function FeedbackWidget({ scenario, theme, currentInputs, predict
       const row = await feedbackApi.submit({
         projectId: currentProject.id,
         scenarioId: scenario.id,
+        runId: runId || null,
         inputs: currentInputs,
         predictedScore: predictedScore,
         predictedLabel: predictedLabel,
@@ -107,6 +108,29 @@ export default function FeedbackWidget({ scenario, theme, currentInputs, predict
         recalibrating={recalibrating}
         onRecalibrate={recalibrate}
       />
+
+      {runId && (
+        <div
+          style={{
+            display: 'inline-flex',
+            alignSelf: 'flex-start',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 10,
+            fontFamily: 'var(--font-mono)',
+            color: theme.fg2,
+            background: theme.bg === '#0B1020' ? '#1F2937' : '#F3F4F6',
+            padding: '3px 8px',
+            borderRadius: 999,
+            border: `1px solid ${theme.border}`,
+            letterSpacing: 0.4,
+          }}
+          title="Feedback rows from this widget are linked to this real run"
+        >
+          <span style={{ color: theme.primary, fontWeight: 700 }}>●</span>
+          <span>tied to run {runId.slice(0, 8)}</span>
+        </div>
+      )}
 
       {phase === 'idle' && (
         <PromptRow
