@@ -50,6 +50,7 @@ const DATA_SOURCES = [
       { key: 'user',           label: 'User',           def: 'postgres' },
       { key: 'password',       label: 'Password',       def: '', secret: true },
       { key: 'table_or_query', label: 'Table or SELECT', def: 'public.credit_card_customers' },
+      { key: 'sslmode',        label: 'SSL mode (Neon → require)', def: 'require' },
     ],
   },
   {

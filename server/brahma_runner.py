@@ -187,10 +187,22 @@ class BrahmaRunner:
 
     def _inject_connection(self, connection_config: dict[str, Any]) -> None:
         """Use upstream's own injection method, run from the right cwd."""
+        # Upstream's postgres code-gen builds a SQLAlchemy URL like
+        # postgresql://user:pwd@host:port/database — no place for sslmode.
+        # Fold sslmode (and any other libpq option) into the database
+        # field as a query string so the URL ends up:
+        #   postgresql://user:pwd@host:port/database?sslmode=require
+        # which SQLAlchemy parses correctly.
+        cfg = dict(connection_config)
+        if cfg.get("type") in ("postgresql", "mysql") and cfg.get("sslmode"):
+            db = cfg.get("database", "")
+            sep = "&" if "?" in db else "?"
+            cfg["database"] = f"{db}{sep}sslmode={cfg['sslmode']}"
+
         cwd_save = Path.cwd()
         os.chdir(self.brahma_dir)
         try:
-            self.engine._inject_connection(connection_config)
+            self.engine._inject_connection(cfg)
         finally:
             os.chdir(cwd_save)
 

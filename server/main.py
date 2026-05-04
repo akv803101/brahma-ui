@@ -548,14 +548,18 @@ def _probe_file(cfg: dict[str, Any]) -> dict[str, Any]:
 
 def _probe_postgres(cfg: dict[str, Any]) -> dict[str, Any]:
     import psycopg2
-    conn = psycopg2.connect(
+    kwargs = dict(
         host=cfg["host"],
         port=int(cfg["port"]),
         dbname=cfg["database"],
         user=cfg["user"],
         password=cfg["password"],
-        connect_timeout=5,
+        connect_timeout=8,
     )
+    sslmode = cfg.get("sslmode")
+    if sslmode:
+        kwargs["sslmode"] = sslmode
+    conn = psycopg2.connect(**kwargs)
     try:
         cur = conn.cursor()
         cur.execute("SELECT 1")
