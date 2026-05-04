@@ -83,15 +83,15 @@ const DATA_SOURCES = [
   },
   {
     id: 'bigquery',
-    label: 'BigQuery (validation only)',
-    hint: 'shipping in chunk F',
+    label: 'BigQuery',
+    hint: 'project · dataset · table',
     backend: 'bigquery',
-    liveProbe: false,
+    liveProbe: true,
     fields: [
-      { key: 'project',          label: 'Project',          def: '' },
-      { key: 'dataset',          label: 'Dataset',          def: '' },
-      { key: 'table_or_query',   label: 'Table or SELECT',  def: '' },
-      { key: 'credentials_json', label: 'Service account JSON', def: '', secret: true },
+      { key: 'project',          label: 'GCP project ID',                          def: '' },
+      { key: 'dataset',          label: 'Dataset',                                 def: '' },
+      { key: 'table_or_query',   label: 'Table or SELECT',                         def: '' },
+      { key: 'credentials_json', label: 'Service account JSON (paste full file)',  def: '', secret: true, multiline: true },
     ],
   },
   {
@@ -430,26 +430,52 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
               <div style={{ fontSize: 11, fontWeight: 600, color: theme.fg2, marginBottom: 4 }}>
                 {f.label}
               </div>
-              <input
-                type={f.secret ? 'password' : 'text'}
-                value={fieldVals[f.key] ?? ''}
-                onChange={(e) => {
-                  setFieldVals((v) => ({ ...v, [f.key]: e.target.value }));
-                  setProbe({ status: 'idle', message: '', sample: null });
-                }}
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  background: inputBg,
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: 8,
-                  padding: '10px 12px',
-                  outline: 'none',
-                  color: theme.fg,
-                  fontSize: 13,
-                  fontFamily: 'var(--font-mono)',
-                }}
-              />
+              {f.multiline ? (
+                <textarea
+                  value={fieldVals[f.key] ?? ''}
+                  onChange={(e) => {
+                    setFieldVals((v) => ({ ...v, [f.key]: e.target.value }));
+                    setProbe({ status: 'idle', message: '', sample: null });
+                  }}
+                  rows={6}
+                  spellCheck={false}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: inputBg,
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: 8,
+                    padding: '10px 12px',
+                    outline: 'none',
+                    color: theme.fg,
+                    fontSize: 11.5,
+                    lineHeight: 1.4,
+                    fontFamily: 'var(--font-mono)',
+                    resize: 'vertical',
+                  }}
+                />
+              ) : (
+                <input
+                  type={f.secret ? 'password' : 'text'}
+                  value={fieldVals[f.key] ?? ''}
+                  onChange={(e) => {
+                    setFieldVals((v) => ({ ...v, [f.key]: e.target.value }));
+                    setProbe({ status: 'idle', message: '', sample: null });
+                  }}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: inputBg,
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: 8,
+                    padding: '10px 12px',
+                    outline: 'none',
+                    color: theme.fg,
+                    fontSize: 13,
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                />
+              )}
             </div>
           ))}
         </div>

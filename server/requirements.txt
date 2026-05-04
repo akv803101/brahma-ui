@@ -20,6 +20,10 @@ psycopg2-binary>=2.9
 # (the upstream engine uses this driver inside stage scripts too)
 snowflake-connector-python>=3.7
 
+# BigQuery client — used by /test-connection probes for sourceConfig.type='bigquery'
+# (upstream engine uses this driver inside stage scripts too)
+google-cloud-bigquery>=3.20
+
 # Google OAuth
 authlib>=1.3
 httpx>=0.27

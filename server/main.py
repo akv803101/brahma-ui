@@ -512,7 +512,9 @@ def test_connection(
             return _probe_sqlite(cfg)
         if src == "snowflake":
             return _probe_snowflake(cfg)
-        # mysql/bigquery/s3/sheets/rest covered in F2+
+        if src == "bigquery":
+            return _probe_bigquery(cfg)
+        # mysql/s3/sheets/rest covered in F3+
         return {
             "ok": True,
             "source": src,
@@ -648,6 +650,79 @@ def _probe_snowflake(cfg: dict[str, Any]) -> dict[str, Any]:
             }
     finally:
         conn.close()
+
+
+def _probe_bigquery(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Authenticate to BigQuery with the user-supplied service-account JSON
+    (pasted into the credentials_json field), then preview their
+    table_or_query. The credentials live in memory only — never written
+    to disk by this probe path.
+
+    table_or_query: either 'project.dataset.table' or a full SELECT.
+    """
+    import json as _json
+    from google.cloud import bigquery
+    from google.oauth2 import service_account
+
+    raw = cfg["credentials_json"]
+    if isinstance(raw, str):
+        try:
+            info = _json.loads(raw)
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False,
+                "source": "bigquery",
+                "message": f"credentials_json is not valid JSON: {e}",
+            }
+    else:
+        info = raw
+
+    try:
+        creds = service_account.Credentials.from_service_account_info(
+            info,
+            scopes=["https://www.googleapis.com/auth/bigquery.readonly"],
+        )
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "source": "bigquery",
+            "message": f"Could not load service account: {e}",
+        }
+
+    client = bigquery.Client(project=cfg["project"], credentials=creds)
+    toq = cfg["table_or_query"].strip()
+    if toq.lower().startswith("select"):
+        preview_sql = f"SELECT * FROM ({toq.rstrip(';')}) LIMIT 1"
+    else:
+        # qualify single-name tables with project + dataset
+        if "." not in toq:
+            toq = f"`{cfg['project']}.{cfg['dataset']}.{toq}`"
+        else:
+            toq = f"`{toq}`"
+        preview_sql = f"SELECT * FROM {toq} LIMIT 1"
+
+    try:
+        job = client.query(preview_sql)
+        rows = list(job.result(timeout=15))
+        cols = [f.name for f in job.schema] if job.schema else []
+        return {
+            "ok": True,
+            "source": "bigquery",
+            "message": f"Connected · {len(cols)} columns",
+            "sample": {
+                "columns": cols,
+                "first_row_present": bool(rows),
+                "project": cfg["project"],
+                "dataset": cfg["dataset"],
+            },
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "source": "bigquery",
+            "message": f"BigQuery query failed: {e}",
+        }
 
 
 def _probe_sqlite(cfg: dict[str, Any]) -> dict[str, Any]:
