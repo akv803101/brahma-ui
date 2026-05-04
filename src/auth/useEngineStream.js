@@ -103,13 +103,16 @@ function reducer(state, action) {
       const stages = state.stages.length ? [...state.stages] : [];
       // Ensure the slot exists (handles 'started' lacking stage_count edge)
       while (stages.length <= data.index) {
-        stages.push({ index: stages.length, label: '', status: 'pending', elapsedS: null });
+        stages.push({ index: stages.length, label: '', status: 'pending', elapsedS: null, startedAt: null });
       }
       stages[data.index] = {
         ...stages[data.index],
         index: data.index,
         label: data.label || stages[data.index].label,
         status: 'running',
+        // Anchor for the client-side live tick (G2). Server's authoritative
+        // elapsed_s lands later via stage_done.
+        startedAt: Date.now(),
       };
       return { ...state, stages, events };
     }
@@ -117,7 +120,7 @@ function reducer(state, action) {
     case 'stage_done': {
       const stages = [...state.stages];
       while (stages.length <= data.index) {
-        stages.push({ index: stages.length, label: '', status: 'pending', elapsedS: null });
+        stages.push({ index: stages.length, label: '', status: 'pending', elapsedS: null, startedAt: null });
       }
       stages[data.index] = {
         ...stages[data.index],
@@ -125,6 +128,8 @@ function reducer(state, action) {
         label: data.label || stages[data.index].label,
         status: data.ok ? 'done' : 'failed',
         elapsedS: data.elapsed_s ?? null,
+        // Clear the live anchor — UI now uses authoritative elapsedS
+        startedAt: null,
       };
       return { ...state, stages, events };
     }

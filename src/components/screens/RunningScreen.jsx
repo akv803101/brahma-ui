@@ -32,17 +32,38 @@ function RealRunning({ scenario, theme, runId, onComplete }) {
     }
   }, [stream.status, onComplete]);
 
+  // G2 — re-render every 500ms while any stage is running so the live
+  // elapsed-time badge ticks up. We track a counter to force the render
+  // (the actual time delta comes from Date.now() - stage.startedAt).
+  const [tick, setTick] = useState(0);
+  const anyRunning = stream.stages.some((s) => s.status === 'running');
+  useEffect(() => {
+    if (!anyRunning) return undefined;
+    const id = setInterval(() => setTick((t) => t + 1), 500);
+    return () => clearInterval(id);
+  }, [anyRunning]);
+
   // Display stages: prefer real stream stages once they arrive; fall back to
   // scenario stages so the UI isn't empty during the connecting phase.
   const fallbackStages = getStagesForScenario(scenario);
+  const now = Date.now(); // captured per render so live badges update with `tick`
   const stages = stream.stages.length
-    ? stream.stages.map((s, i) => ({
-        n: String(i + 1).padStart(2, '0'),
-        name: s.label || fallbackStages[i]?.name || `Stage ${i + 1}`,
-        status: s.status,
-        elapsedS: s.elapsedS,
-      }))
-    : fallbackStages.map((s) => ({ n: s.n, name: s.name, status: 'pending', elapsedS: null }));
+    ? stream.stages.map((s, i) => {
+        let liveElapsed = null;
+        if (s.status === 'running' && s.startedAt) {
+          liveElapsed = (now - s.startedAt) / 1000;
+        }
+        return {
+          n: String(i + 1).padStart(2, '0'),
+          name: s.label || fallbackStages[i]?.name || `Stage ${i + 1}`,
+          status: s.status,
+          elapsedS: s.elapsedS,
+          liveElapsedS: liveElapsed,
+        };
+      })
+    : fallbackStages.map((s) => ({ n: s.n, name: s.name, status: 'pending', elapsedS: null, liveElapsedS: null }));
+  // Reference `tick` so React knows this render depends on it
+  void tick;
 
   const statusLabel =
     stream.status === 'connecting'
@@ -174,6 +195,18 @@ function RealRunning({ scenario, theme, runId, onComplete }) {
                 {s.elapsedS != null && (
                   <span style={{ color: theme.fg3, fontSize: 10, fontFamily: 'var(--font-mono)' }}>
                     {s.elapsedS.toFixed(1)}s
+                  </span>
+                )}
+                {s.elapsedS == null && s.liveElapsedS != null && (
+                  <span
+                    style={{
+                      color: theme.primary,
+                      fontSize: 10,
+                      fontFamily: 'var(--font-mono)',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {s.liveElapsedS.toFixed(1)}s
                   </span>
                 )}
                 <span
