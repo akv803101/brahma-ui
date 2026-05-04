@@ -514,7 +514,9 @@ def test_connection(
             return _probe_snowflake(cfg)
         if src == "bigquery":
             return _probe_bigquery(cfg)
-        # mysql/s3/sheets/rest covered in F3+
+        if src == "s3":
+            return _probe_s3(cfg)
+        # mysql/sheets/rest covered in F4+
         return {
             "ok": True,
             "source": src,
@@ -723,6 +725,51 @@ def _probe_bigquery(cfg: dict[str, Any]) -> dict[str, Any]:
             "source": "bigquery",
             "message": f"BigQuery query failed: {e}",
         }
+
+
+def _probe_s3(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Boot a boto3 S3 client with explicit credentials + region, then
+    HEAD the user-supplied object. Cheap (no body download), exercises
+    auth + bucket policy + key existence in one round trip. Returns
+    object size and last-modified timestamp on success.
+
+    file_format is recorded but not validated here — the actual read
+    happens inside upstream's stage script during the run.
+    """
+    import boto3
+    from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
+
+    s3 = boto3.client(
+        "s3",
+        region_name=cfg["region"],
+        aws_access_key_id=cfg["access_key"],
+        aws_secret_access_key=cfg["secret_key"],
+    )
+    try:
+        meta = s3.head_object(Bucket=cfg["bucket"], Key=cfg["key"])
+    except (ClientError, EndpointConnectionError, NoCredentialsError) as e:
+        return {
+            "ok": False,
+            "source": "s3",
+            "message": f"S3 head_object failed: {e}",
+        }
+
+    size = meta.get("ContentLength", 0)
+    size_mb = size / (1024 * 1024)
+    last_modified = meta.get("LastModified")
+    return {
+        "ok": True,
+        "source": "s3",
+        "message": f"Connected · {size_mb:.2f} MB · format={cfg.get('file_format')}",
+        "sample": {
+            "bucket": cfg["bucket"],
+            "key": cfg["key"],
+            "size_bytes": size,
+            "last_modified": last_modified.isoformat() if last_modified else None,
+            "file_format": cfg.get("file_format"),
+        },
+    }
 
 
 def _probe_sqlite(cfg: dict[str, Any]) -> dict[str, Any]:
