@@ -381,7 +381,32 @@ _REAL_RUN_STARTED: set[str] = set()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    _print_oauth_setup_hint()
     yield
+
+
+def _print_oauth_setup_hint() -> None:
+    """
+    I3: at boot, print a visible hint with the exact OAuth callback URL
+    the user needs to register in Google Cloud Console. Removes the
+    guesswork after the first prod deploy when the Render-assigned URL
+    is unknown until the build finishes.
+    """
+    backend = os.getenv("BACKEND_ORIGIN", "http://localhost:8000")
+    has_oauth = bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
+    callback = f"{backend}/api/auth/google/callback"
+    border = "=" * 72
+    print(border, flush=True)
+    print(f" Brahma backend is up — BACKEND_ORIGIN = {backend}", flush=True)
+    if has_oauth:
+        print(" Google OAuth: configured", flush=True)
+        print(" Add this exact URL to Google Cloud Console > OAuth client >", flush=True)
+        print(" Authorized redirect URIs:", flush=True)
+        print(f"   {callback}", flush=True)
+    else:
+        print(" Google OAuth: NOT configured (GOOGLE_CLIENT_ID/SECRET missing)", flush=True)
+        print(" Email + password sign-in still works.", flush=True)
+    print(border, flush=True)
 
 
 app = FastAPI(
@@ -570,14 +595,20 @@ def _validate_source_config(cfg: dict[str, Any]) -> str:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    backend_origin = os.getenv("BACKEND_ORIGIN", "http://localhost:8000")
     return {
         "status": "ok",
         "mode": "real-brahma" if USE_REAL_BRAHMA else "mock",
         "scenarios": list(SCENARIOS.keys()),
         "runs": len(_RUNS),
         "google_oauth": bool(GOOGLE_CLIENT_ID),
+        # I3: surface the exact OAuth callback URL so post-deploy setup
+        # is one curl away — paste it into Google Cloud Console.
+        "google_oauth_callback": f"{backend_origin}/api/auth/google/callback",
         "resend_configured": bool(os.getenv("RESEND_API_KEY", "").strip()),
         "db": "postgres" if (os.getenv("DATABASE_URL") or "").strip() else "sqlite",
+        "backend_origin": backend_origin,
+        "version": "0.1.0",
     }
 
 
