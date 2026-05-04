@@ -96,6 +96,9 @@ export default function FeedbackIntelPanel({ theme }) {
           {Object.keys(stats.by_tier).length > 0 && (
             <ByTierSection theme={theme} byTier={stats.by_tier} />
           )}
+          {stats.by_run?.length > 0 && (
+            <ByRunSection theme={theme} byRun={stats.by_run} />
+          )}
           {stats.recent.length > 0 && (
             <RecentSection theme={theme} recent={stats.recent} />
           )}
@@ -314,6 +317,97 @@ function ByTierSection({ theme, byTier }) {
     </div>
   );
 }
+
+/**
+ * H4 — Per-run accuracy breakdown. Each row is one pipeline run, sorted
+ * by most-recent-feedback first. Bar shows correct vs incorrect ratio.
+ * Tooltip shows run id + when feedback started/ended for that run.
+ */
+function ByRunSection({ theme, byRun }) {
+  const isDark = theme.bg === '#0B1020';
+  return (
+    <div>
+      <SectionTitle theme={theme}>Per-run accuracy · {byRun.length} run{byRun.length === 1 ? '' : 's'} with feedback</SectionTitle>
+      <div
+        style={{
+          marginTop: 10,
+          border: `1px solid ${theme.border}`,
+          borderRadius: 10,
+          overflow: 'hidden',
+        }}
+      >
+        {byRun.map((b, i) => {
+          const ratio = b.total ? b.correct / b.total : 0;
+          const accent = b.accuracy >= 0.8 ? theme.pos : b.accuracy >= 0.5 ? theme.warn : theme.neg;
+          return (
+            <div
+              key={b.run_id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '120px 1fr 90px 110px',
+                gap: 12,
+                alignItems: 'center',
+                padding: '10px 14px',
+                borderTop: i === 0 ? 'none' : `1px solid ${theme.border}`,
+                background: isDark ? '#0B1020' : '#F9FAFB',
+                fontSize: 12,
+              }}
+              title={`run ${b.run_id} · ${formatRelative(b.earliest)} → ${formatRelative(b.latest)}`}
+            >
+              <div
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  color: theme.fg,
+                  fontWeight: 700,
+                  letterSpacing: 0.4,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {b.run_id.slice(0, 12)}
+              </div>
+              <div
+                style={{
+                  height: 14,
+                  borderRadius: 999,
+                  background: isDark ? '#1F2937' : '#F3F4F6',
+                  overflow: 'hidden',
+                  display: 'flex',
+                }}
+              >
+                <div style={{ width: `${ratio * 100}%`, background: theme.pos, transition: 'width .25s' }} />
+                <div style={{ width: `${(1 - ratio) * 100}%`, background: theme.neg, opacity: 0.85, transition: 'width .25s' }} />
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: accent,
+                  fontFamily: 'var(--font-mono)',
+                  textAlign: 'right',
+                }}
+              >
+                {(b.accuracy * 100).toFixed(0)}%
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: theme.fg2,
+                  fontFamily: 'var(--font-mono)',
+                  textAlign: 'right',
+                }}
+              >
+                {b.correct}/{b.total} · {formatRelative(b.latest)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 function RecentSection({ theme, recent }) {
   return (

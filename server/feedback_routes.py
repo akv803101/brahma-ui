@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -64,6 +64,17 @@ class FeedbackOut(BaseModel):
     created_at: datetime
 
 
+class ByRunStat(BaseModel):
+    run_id: str
+    total: int
+    correct: int
+    incorrect: int
+    accuracy: float
+    earliest: datetime
+    latest: datetime
+    model_version: Optional[str] = None
+
+
 class FeedbackStatsOut(BaseModel):
     project_id: int
     scenario_id: Optional[str] = None
@@ -72,6 +83,7 @@ class FeedbackStatsOut(BaseModel):
     incorrect: int
     accuracy: float                       # 0..1
     by_tier: dict[str, dict[str, int]]    # {"HIGH": {"correct": 4, "incorrect": 1}, ...}
+    by_run: list[ByRunStat]               # H4: per-run accuracy, newest first
     recent: list[FeedbackOut]
     last_correction_at: Optional[datetime]
     model_version: str
@@ -171,6 +183,41 @@ def get_feedback_stats(
         bucket = by_tier.setdefault(tier, {"correct": 0, "incorrect": 0})
         bucket["correct" if r.was_correct else "incorrect"] += 1
 
+    # H4: per-run accuracy aggregates. Skip rows with run_id == NULL
+    # (legacy rows from before H1 wired runId through).
+    per_run: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if not r.run_id:
+            continue
+        slot = per_run.setdefault(r.run_id, {
+            "total": 0, "correct": 0,
+            "earliest": r.created_at, "latest": r.created_at,
+            "model_version": r.model_version,
+        })
+        slot["total"] += 1
+        if r.was_correct:
+            slot["correct"] += 1
+        if r.created_at < slot["earliest"]:
+            slot["earliest"] = r.created_at
+        if r.created_at > slot["latest"]:
+            slot["latest"] = r.created_at
+
+    by_run = [
+        ByRunStat(
+            run_id=rid,
+            total=v["total"],
+            correct=v["correct"],
+            incorrect=v["total"] - v["correct"],
+            accuracy=v["correct"] / v["total"] if v["total"] else 0.0,
+            earliest=v["earliest"],
+            latest=v["latest"],
+            model_version=v["model_version"],
+        )
+        for rid, v in per_run.items()
+    ]
+    # Newest run first (by latest correction time)
+    by_run.sort(key=lambda b: b.latest, reverse=True)
+
     last_correction_at = rows[0].created_at if rows else None
 
     # Count corrections since the project's last calibration
@@ -189,6 +236,7 @@ def get_feedback_stats(
         incorrect=incorrect,
         accuracy=accuracy,
         by_tier=by_tier,
+        by_run=by_run,
         recent=[_row_to_out(r) for r in rows[:8]],
         last_correction_at=last_correction_at,
         model_version=project.model_version,
