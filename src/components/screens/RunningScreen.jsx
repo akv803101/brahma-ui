@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import PulseDot from '../primitives/PulseDot.jsx';
 import { CheckIcon } from '../primitives/Icons.jsx';
 import { LOG_FRAGMENTS, getStagesForScenario } from '../../data/scenarios.js';
-import { useEngineStream } from '../../auth';
 
 /**
  * Running screen — live pipeline view with two columns:
@@ -10,27 +9,19 @@ import { useEngineStream } from '../../auth';
  *   RIGHT · streaming terminal log (Claude narrative when real, mock fragments otherwise)
  *
  * Two modes:
- *   real  — `runId` is set; consume useEngineStream() for stages + narrative.
+ *   real  — `runId` is set; reads from `stream` prop (G4: hook lives in
+ *           BrahmaShell so log buffer + EventSource survive nav).
  *   mock  — `runId` is null; legacy scenario auto-advance (back-compat for demos).
  */
-export default function RunningScreen({ scenario, theme, stageIdx, runId, onComplete }) {
-  if (runId) {
-    return <RealRunning scenario={scenario} theme={theme} runId={runId} onComplete={onComplete} />;
+export default function RunningScreen({ scenario, theme, stageIdx, runId, stream, onComplete }) {
+  if (runId && stream) {
+    return <RealRunning scenario={scenario} theme={theme} runId={runId} stream={stream} />;
   }
   return <MockRunning scenario={scenario} theme={theme} stageIdx={stageIdx} onComplete={onComplete} />;
 }
 
-function RealRunning({ scenario, theme, runId, onComplete }) {
-  const stream = useEngineStream(runId);
+function RealRunning({ scenario, theme, runId, stream }) {
   const isDark = theme.bg === '#0B1020';
-  const completedRef = useRef(false);
-
-  useEffect(() => {
-    if (stream.status === 'complete' && !completedRef.current) {
-      completedRef.current = true;
-      if (onComplete) onComplete();
-    }
-  }, [stream.status, onComplete]);
 
   // G2 — re-render every 500ms while any stage is running so the live
   // elapsed-time badge ticks up. We track a counter to force the render

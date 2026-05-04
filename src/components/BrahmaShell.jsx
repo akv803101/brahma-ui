@@ -6,7 +6,7 @@ import TweaksPanel from './TweaksPanel.jsx';
 import { ConnectScreen, RunningScreen, LivePredict, MemoryScreen } from './screens';
 import { ReportLayoutA, ReportLayoutB, ReportLayoutC } from './report';
 import { PulseDot, BrahmaMark } from './primitives';
-import { useAuth, pipelinesApi, ApiError, useReport } from '../auth';
+import { useAuth, pipelinesApi, ApiError, useReport, useEngineStream } from '../auth';
 
 // Lazy-load the Insights deck — defers framer-motion (~200 KB) and the deck
 // data (~80 slide configs) until the user opens the Insights tab.
@@ -82,6 +82,23 @@ export default function BrahmaShell() {
   const scenario = SCENARIOS[tweaks.scenario] || SCENARIOS.churn;
   const stages = getStagesForScenario(scenario);
   const theme = useTheme(tweaks.primaryColor, tweaks.dark);
+
+  // G4 — own the SSE connection at shell level so screen navigation
+  // (Connect → Running → Report → back to Running) does NOT close the
+  // EventSource and lose the log buffer + narrative + stages state.
+  // The hook lives once at the parent and the live stream prop flows
+  // down to whichever child screen is mounted.
+  const stream = useEngineStream(realRunId);
+
+  // When stream completes while user is on Running, auto-route to Report
+  const completedRef = useRef(false);
+  useEffect(() => {
+    if (realRunId && stream.status === 'complete' && !completedRef.current && screen === 'running') {
+      completedRef.current = true;
+      setScreen('report');
+    }
+    if (!realRunId) completedRef.current = false;
+  }, [realRunId, stream.status, screen]);
 
   // Fetch the real-engine report once the run lands on the Report tab.
   const reportRunId = realRunId && (screen === 'report' || screen === 'insights') ? realRunId : null;
@@ -187,6 +204,7 @@ export default function BrahmaShell() {
             theme={theme}
             stageIdx={tweaks.stageIdx}
             runId={realRunId}
+            stream={stream}
             onComplete={() => setScreen('report')}
           />
         );
