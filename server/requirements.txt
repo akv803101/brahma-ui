@@ -16,6 +16,10 @@ python-dotenv>=1.0
 # Postgres driver — used only when DATABASE_URL is set (else SQLite, no driver needed)
 psycopg2-binary>=2.9
 
+# Snowflake connector — used by /test-connection probes for sourceConfig.type='snowflake'
+# (the upstream engine uses this driver inside stage scripts too)
+snowflake-connector-python>=3.7
+
 # Google OAuth
 authlib>=1.3
 httpx>=0.27

@@ -510,7 +510,9 @@ def test_connection(
             return _probe_postgres(cfg)
         if src == "sqlite":
             return _probe_sqlite(cfg)
-        # mysql/snowflake/bigquery/s3/sheets/rest covered in F
+        if src == "snowflake":
+            return _probe_snowflake(cfg)
+        # mysql/bigquery/s3/sheets/rest covered in F2+
         return {
             "ok": True,
             "source": src,
@@ -584,6 +586,64 @@ def _probe_postgres(cfg: dict[str, Any]) -> dict[str, Any]:
             return {
                 "ok": False,
                 "source": "postgresql",
+                "message": f"Connected, but preview failed: {e}",
+            }
+    finally:
+        conn.close()
+
+
+def _probe_snowflake(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Connect to Snowflake with the user's credentials, run SELECT 1, then
+    preview the user's table_or_query. Failures (auth, unreachable, bad
+    table) are caught and surfaced as ok=false with the raw error text
+    so the UI can display it.
+    """
+    import snowflake.connector  # heavy import — keep lazy
+    kwargs = dict(
+        account=cfg["account"],
+        user=cfg["user"],
+        password=cfg["password"],
+        warehouse=cfg["warehouse"],
+        database=cfg["database"],
+        schema=cfg["schema"],
+        login_timeout=10,
+        network_timeout=10,
+    )
+    role = cfg.get("role")
+    if role:
+        kwargs["role"] = role
+
+    conn = snowflake.connector.connect(**kwargs)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        toq = cfg["table_or_query"].strip()
+        if toq.lower().startswith("select"):
+            preview_sql = f"SELECT * FROM ({toq.rstrip(';')}) LIMIT 1"
+        else:
+            preview_sql = f"SELECT * FROM {toq} LIMIT 1"
+        try:
+            cur.execute(preview_sql)
+            cols = [d.name for d in cur.description] if cur.description else []
+            row = cur.fetchone()
+            return {
+                "ok": True,
+                "source": "snowflake",
+                "message": f"Connected · {len(cols)} columns",
+                "sample": {
+                    "columns": cols,
+                    "first_row_present": row is not None,
+                    "warehouse": cfg["warehouse"],
+                    "database": cfg["database"],
+                    "schema": cfg["schema"],
+                },
+            }
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False,
+                "source": "snowflake",
                 "message": f"Connected, but preview failed: {e}",
             }
     finally:
