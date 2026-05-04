@@ -90,6 +90,8 @@ export const pipelinesApi = {
       method: 'POST',
       body: JSON.stringify({ inputs }),
     }),
+  predictSchema: (runId) =>
+    request(`/pipelines/${encodeURIComponent(runId)}/predict-schema`),
   insights: (runId) =>
     request(`/pipelines/${encodeURIComponent(runId)}/insights`, { method: 'POST' }),
   /**

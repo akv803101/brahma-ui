@@ -1590,27 +1590,220 @@ def _generate_insights_with_claude(
     return slides
 
 
+@app.get("/api/pipelines/{run_id}/predict-schema")
+def predict_schema(
+    run_id: str,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
+    """
+    Return the feature schema needed to build a Live Predict form for a
+    real run. Pulls feature names from the deployment package and
+    (when available) sampled defaults from the preprocessed parquet.
+
+    Mock runs return a 400 — the legacy LivePredict already knows what
+    fields to render from scenario.inputs.
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    pkl_path = repo_root / "runs" / run_id / "outputs" / "models" / "deployment_package.pkl"
+    has_disk = pkl_path.exists()
+    if run_id not in _RUNS and not has_disk:
+        raise HTTPException(404, f"Unknown run: {run_id}")
+    if run_id in _RUNS and _RUNS[run_id].get("userId") not in (None, user.id):
+        raise HTTPException(403, "This run belongs to a different user.")
+    if run_id in _RUNS and _RUNS[run_id].get("mode") != "real":
+        raise HTTPException(400, "Schema only available for real runs.")
+
+    pkg = _load_deployment_package(run_id)
+    if pkg is None:
+        raise HTTPException(404, "Run has no deployment package yet.")
+
+    repo_root = Path(__file__).resolve().parent.parent
+    pre_path = repo_root / "runs" / run_id / "outputs" / "data" / "preprocessed.parquet"
+
+    feature_cols: list[str] = list(pkg.get("feature_cols", []))
+    samples: dict[str, list[float]] = {}
+    if pre_path.exists():
+        try:
+            import pandas as pd
+            df = pd.read_parquet(pre_path)
+            for col in feature_cols:
+                if col not in df.columns:
+                    continue
+                series = df[col].dropna()
+                if series.empty:
+                    continue
+                # Numeric: send 5 evenly-spaced quantiles + median; the UI
+                # uses median as the default and the others as quick picks.
+                if pd.api.types.is_numeric_dtype(series):
+                    quantiles = [0.1, 0.25, 0.5, 0.75, 0.9]
+                    samples[col] = [round(float(series.quantile(q)), 4) for q in quantiles]
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {
+        "runId": run_id,
+        "feature_cols": feature_cols,
+        "samples": samples,
+        "threshold": pkg.get("threshold", 0.5),
+        "risk_tiers": pkg.get("risk_tiers", {}),
+        "model_version": pkg.get("model_version"),
+    }
+
+
+def _stub_main_for_pickle() -> None:
+    """
+    Upstream's deployment_package.pkl includes function closures whose
+    qualnames live in __main__ (predict_brahma, validate_input, etc).
+    Pickle won't unpickle them unless the names exist in __main__.
+    We don't actually USE those closures (we re-implement predict on
+    our side using model + feature_cols), so we just stub them as
+    placeholders so the rest of the pickle loads cleanly.
+    """
+    import sys as _sys
+    main = _sys.modules["__main__"]
+    for name in ("predict_brahma", "validate_input", "check_for_drift"):
+        if not hasattr(main, name):
+            setattr(main, name, lambda *a, **kw: None)
+    # Modules the closures captured globally
+    for mod_name in ("numpy", "pandas", "time"):
+        try:
+            __import__(mod_name)
+            setattr(main, mod_name.replace("numpy", "np"), __import__(mod_name))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# Cache loaded packages per run_id so we don't unpickle the model on
+# every prediction call. Keyed by run_id; entries never evict in dev.
+_DEPLOY_PKG_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _load_deployment_package(run_id: str) -> dict[str, Any] | None:
+    if run_id in _DEPLOY_PKG_CACHE:
+        return _DEPLOY_PKG_CACHE[run_id]
+    repo_root = Path(__file__).resolve().parent.parent
+    pkl = repo_root / "runs" / run_id / "outputs" / "models" / "deployment_package.pkl"
+    if not pkl.exists():
+        return None
+    _stub_main_for_pickle()
+    import pickle as _pickle
+    with open(pkl, "rb") as f:
+        pkg = _pickle.load(f)
+    # Trim closures we don't use to keep the cache lean
+    pkg = {
+        "model": pkg.get("model"),
+        "feature_cols": pkg.get("feature_cols", []),
+        "model_version": pkg.get("model_version"),
+        "threshold": pkg.get("threshold", 0.5),
+        "risk_tiers": pkg.get("risk_tiers", {"HIGH": 0.7, "MEDIUM": 0.4, "LOW": 0.0}),
+    }
+    _DEPLOY_PKG_CACHE[run_id] = pkg
+    return pkg
+
+
+def _real_predict(run_id: str, inputs: dict[str, float]) -> dict[str, Any]:
+    """
+    Real prediction path: load the run's deployment_package.pkl (cached),
+    build a feature row in the saved column order, run predict_proba,
+    classify into risk tier. Mirrors upstream stage11_deploy.predict_brahma
+    minus the closures (we use model + feature_cols only).
+    """
+    import time as _time
+    import numpy as _np
+
+    pkg = _load_deployment_package(run_id)
+    if pkg is None:
+        raise HTTPException(404, "Run has no deployment package yet.")
+    model = pkg["model"]
+    feature_cols: list[str] = pkg["feature_cols"]
+    threshold: float = pkg.get("threshold", 0.5)
+    tiers: dict[str, float] = pkg.get("risk_tiers", {"HIGH": 0.7, "MEDIUM": 0.4, "LOW": 0.0})
+
+    t0 = _time.perf_counter()
+    row = _np.array(
+        [[float(inputs.get(c, 0.0) or 0.0) for c in feature_cols]],
+        dtype=float,
+    )
+    prob = float(model.predict_proba(row)[0, 1])
+    prediction = int(prob >= threshold)
+
+    if prob > tiers.get("HIGH", 0.7):
+        tier = "HIGH"
+    elif prob > tiers.get("MEDIUM", 0.4):
+        tier = "MEDIUM"
+    else:
+        tier = "LOW"
+
+    # Top reasons: feature_importances_ * value
+    top: list[dict[str, Any]] = []
+    if hasattr(model, "feature_importances_"):
+        try:
+            imps = model.feature_importances_
+            contribs = _np.abs(imps * row[0])
+            top_idx = contribs.argsort()[-3:][::-1]
+            top = [
+                {
+                    "feature": feature_cols[i],
+                    "importance": round(float(imps[i]), 4),
+                    "value": round(float(row[0][i]), 4),
+                }
+                for i in top_idx
+            ]
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {
+        "score": round(prob, 4),
+        "prediction": prediction,
+        "tier": tier,
+        "top_reasons": top,
+        "model_version": pkg.get("model_version"),
+        "latency_ms": round((_time.perf_counter() - t0) * 1000, 3),
+    }
+
+
 @app.post("/api/pipelines/{run_id}/predict")
 def predict(
     run_id: str,
     body: PredictBody,
     user: Annotated[User, Depends(current_user)],
 ) -> dict[str, Any]:
-    if run_id not in _RUNS:
+    # H2: allow predicting against any run whose deployment_package.pkl
+    # exists on disk, even if uvicorn restarted and dropped _RUNS.
+    repo_root = Path(__file__).resolve().parent.parent
+    pkl_path = repo_root / "runs" / run_id / "outputs" / "models" / "deployment_package.pkl"
+    has_disk = pkl_path.exists()
+
+    if run_id not in _RUNS and not has_disk:
         raise HTTPException(404, f"Unknown run: {run_id}")
-    if _RUNS[run_id].get("userId") not in (None, user.id):
+    if run_id in _RUNS and _RUNS[run_id].get("userId") not in (None, user.id):
         raise HTTPException(403, "This run belongs to a different user.")
-    run = _RUNS[run_id]
+
+    run = _RUNS.get(run_id) or {"mode": "real" if has_disk else "mock"}
+
+    # H2 — real path: load deployment_package.pkl and run real predict_proba
+    if run.get("mode") == "real":
+        try:
+            res = _real_predict(run_id, body.inputs)
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"Real predict failed: {e}") from e
+        return {
+            "runId": run_id,
+            "mode": "real",
+            **res,
+        }
+
+    # Mock fallback (back-compat with the legacy 7-scenario demo)
     scenario = SCENARIOS[run["scenarioId"]]
     score_fn: Callable[[dict], float] = scenario["score_fn"]
-
     try:
         score = score_fn(body.inputs)
     except KeyError as e:
         raise HTTPException(400, f"Missing input field: {e.args[0]}")
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Score function error: {e}") from e
-
     return {
         "runId": run_id,
         "scenarioId": scenario["id"],

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useCountUp } from '../../theme/useTheme.js';
 import FeedbackWidget from './FeedbackWidget.jsx';
+import { pipelinesApi, ApiError } from '../../auth';
 
 /**
  * Live Predict screen — left column: sliders, right column: result panel.
@@ -17,6 +18,53 @@ import FeedbackWidget from './FeedbackWidget.jsx';
  */
 
 export default function LivePredict({ scenario, theme, runId }) {
+  // H2 — when runId points at a real run with a saved deployment package,
+  // delegate to RealLivePredict which fetches feature schema + posts to
+  // the engine's /predict endpoint instead of running scenario.scoreFn.
+  const [realSchema, setRealSchema] = useState(null);
+  const [realSchemaError, setRealSchemaError] = useState(null);
+  useEffect(() => {
+    if (!runId) {
+      setRealSchema(null);
+      setRealSchemaError(null);
+      return;
+    }
+    let cancelled = false;
+    pipelinesApi
+      .predictSchema(runId)
+      .then((s) => {
+        if (!cancelled) setRealSchema(s);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setRealSchemaError(e instanceof ApiError ? e.message : 'No predict schema.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId]);
+
+  if (runId && realSchema) {
+    return (
+      <RealLivePredict
+        runId={runId}
+        schema={realSchema}
+        scenario={scenario}
+        theme={theme}
+      />
+    );
+  }
+  if (runId && realSchemaError) {
+    // Real run exists but schema endpoint failed; fall through to mock UI
+    // with a small caption explaining what happened.
+    return (
+      <MockLivePredict scenario={scenario} theme={theme} runId={runId} note={realSchemaError} />
+    );
+  }
+  return <MockLivePredict scenario={scenario} theme={theme} runId={runId} />;
+}
+
+function MockLivePredict({ scenario, theme, runId, note }) {
   const [state, setState] = useState(() =>
     Object.fromEntries(scenario.liveInputs.map((f) => [f.key, f.def]))
   );
@@ -414,5 +462,252 @@ function Slider({ label, val, setVal, min, max, step = 1, fmt, unit = '', theme 
         style={{ width: '100%', accentColor: theme.primary, color: theme.fg2 }}
       />
     </label>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// Real-engine Live Predict — driven by the saved deployment_package.pkl
+// ════════════════════════════════════════════════════════════════════════
+
+function RealLivePredict({ runId, schema, scenario, theme }) {
+  const isDark = theme.bg === '#0B1020';
+  // Initialize each feature to its median (3rd of 5 quantiles), or 0 if
+  // the schema didn't ship samples for that column.
+  const [state, setState] = useState(() => {
+    const out = {};
+    for (const c of schema.feature_cols) {
+      const s = schema.samples?.[c];
+      out[c] = (s && s.length >= 3) ? s[2] : 0;
+    }
+    return out;
+  });
+
+  const [result, setResult] = useState(null);
+  const [predictError, setPredictError] = useState(null);
+
+  // Debounced predict on every input change
+  useEffect(() => {
+    const handle = setTimeout(async () => {
+      try {
+        const res = await pipelinesApi.predict(runId, state);
+        setResult(res);
+        setPredictError(null);
+      } catch (e) {
+        setPredictError(e instanceof ApiError ? e.message : 'Predict failed.');
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [state, runId]);
+
+  const score = result?.score ?? 0;
+  const tier = result?.tier ?? 'LOW';
+  const tierColor = tier === 'HIGH' ? theme.neg : tier === 'MEDIUM' ? theme.warn : theme.pos;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 0' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {/* LEFT — feature inputs */}
+        <div
+          style={{
+            background: theme.card,
+            borderRadius: 12,
+            padding: '20px 24px',
+            border: `1px solid ${theme.border}`,
+            maxHeight: 480,
+            overflow: 'auto',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: 1.2,
+              color: theme.primary,
+              textTransform: 'uppercase',
+              marginBottom: 4,
+            }}
+          >
+            Real engine · run {runId.slice(0, 8)}
+          </div>
+          <h3 style={{ fontSize: 16, fontWeight: 800, color: theme.fg, margin: '0 0 14px' }}>
+            Adjust feature values · {schema.feature_cols.length} inputs
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {schema.feature_cols.map((feature) => (
+              <FeatureNumberInput
+                key={feature}
+                feature={feature}
+                samples={schema.samples?.[feature] || null}
+                value={state[feature]}
+                theme={theme}
+                onChange={(v) => setState((s) => ({ ...s, [feature]: v }))}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* RIGHT — prediction result */}
+        <div
+          style={{
+            background: theme.card,
+            borderRadius: 12,
+            padding: '20px 24px',
+            border: `1px solid ${theme.border}`,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: 1.2,
+              color: theme.fg2,
+              textTransform: 'uppercase',
+            }}
+          >
+            Live prediction · {result?.model_version || schema.model_version || '—'}
+          </div>
+          {predictError ? (
+            <div style={{ color: theme.neg, fontSize: 13, fontFamily: 'var(--font-mono)' }}>
+              {predictError}
+            </div>
+          ) : !result ? (
+            <div style={{ color: theme.fg3, fontSize: 13, fontFamily: 'var(--font-mono)' }}>
+              computing…
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  fontSize: 64,
+                  fontWeight: 900,
+                  color: theme.fg,
+                  letterSpacing: -1.5,
+                  fontFamily: 'var(--font-mono)',
+                  lineHeight: 1,
+                }}
+              >
+                {(score * 100).toFixed(1)}%
+              </div>
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignSelf: 'flex-start',
+                  alignItems: 'center',
+                  gap: 8,
+                  background: tierColor,
+                  color: '#fff',
+                  padding: '6px 14px',
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  letterSpacing: 1.5,
+                }}
+              >
+                {tier} RISK
+              </div>
+              <div style={{ fontSize: 12, color: theme.fg3, fontFamily: 'var(--font-mono)' }}>
+                latency {result.latency_ms}ms · prediction = {result.prediction}
+              </div>
+              {result.top_reasons?.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: 1,
+                      color: theme.fg3,
+                      textTransform: 'uppercase',
+                      marginBottom: 6,
+                    }}
+                  >
+                    Top contributors
+                  </div>
+                  {result.top_reasons.map((r) => (
+                    <div
+                      key={r.feature}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: 12,
+                        fontFamily: 'var(--font-mono)',
+                        color: theme.fg2,
+                        padding: '3px 0',
+                        borderBottom: `1px dashed ${theme.border}`,
+                      }}
+                    >
+                      <span style={{ color: theme.fg }}>{r.feature}</span>
+                      <span>
+                        imp {r.importance} · val {r.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <FeedbackWidget
+        scenario={scenario}
+        theme={theme}
+        runId={runId}
+        currentInputs={state}
+        predictedScore={score}
+        predictedLabel={result?.prediction === 1 ? 'positive' : 'negative'}
+        predictedTier={tier}
+      />
+    </div>
+  );
+}
+
+function FeatureNumberInput({ feature, samples, value, theme, onChange }) {
+  const isDark = theme.bg === '#0B1020';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 600, color: theme.fg }}>{feature}</span>
+        <span
+          style={{
+            fontSize: 10,
+            color: theme.fg3,
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          {Number(value).toFixed(3)}
+        </span>
+      </div>
+      <input
+        type="number"
+        value={value}
+        step={samples ? Math.abs((samples[4] - samples[0]) / 50) : 0.1}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value);
+          if (!Number.isNaN(v)) onChange(v);
+        }}
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          background: isDark ? '#0B1020' : '#F9FAFB',
+          border: `1px solid ${theme.border}`,
+          borderRadius: 6,
+          padding: '6px 10px',
+          outline: 'none',
+          color: theme.fg,
+          fontSize: 12,
+          fontFamily: 'var(--font-mono)',
+        }}
+      />
+    </div>
   );
 }
