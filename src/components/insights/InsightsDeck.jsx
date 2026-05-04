@@ -3,17 +3,25 @@ import SlideDeck from './SlideDeck.jsx';
 import { renderSlide } from './Slides.jsx';
 import { getDeckForScenario } from '../../data/decks.js';
 import { BrahmaMark } from '../primitives';
+import { useInsights } from '../../auth';
 
 /**
- * Public entry: takes scenario + theme + completion gate, renders the
- * scenario-specific deck (10–15 slides), or a placeholder when not yet
- * unlocked.
+ * Public entry: renders an insights deck. Two modes:
+ *   real  — runId set → call POST /api/pipelines/{id}/insights, render
+ *           Claude-generated slides (cover, action-title, engine-chart,
+ *           recommendation, next-steps).
+ *   mock  — no runId → fall back to hardcoded scenario decks (decks.js).
  */
-export default function InsightsDeck({ scenario, theme, complete }) {
+export default function InsightsDeck({ scenario, theme, complete, runId, hasReport }) {
   if (!complete) {
     return <NotYetReady theme={theme} scenario={scenario} />;
   }
 
+  if (runId && hasReport) {
+    return <RealInsightsDeck runId={runId} scenario={scenario} theme={theme} />;
+  }
+
+  // Mock fallback (legacy demo path)
   const slides = getDeckForScenario(scenario.id);
   if (!slides.length) {
     return (
@@ -22,7 +30,6 @@ export default function InsightsDeck({ scenario, theme, complete }) {
       </div>
     );
   }
-
   return (
     <SlideDeck
       slides={slides}
@@ -32,6 +39,58 @@ export default function InsightsDeck({ scenario, theme, complete }) {
       }
       exportFilename={`Brahma-${scenario.id}-Insights`}
     />
+  );
+}
+
+function RealInsightsDeck({ runId, scenario, theme }) {
+  const { slides, loading, error } = useInsights(runId, true);
+
+  if (loading) return <DeckStatus theme={theme} status="generating" detail="Brahma is composing the deck — Haiku reading the run output…" />;
+  if (error) return <DeckStatus theme={theme} status="error" detail={error} />;
+  if (!slides || !slides.length) return <DeckStatus theme={theme} status="empty" detail="No slides returned." />;
+
+  return (
+    <SlideDeck
+      slides={slides}
+      theme={theme}
+      renderSlide={(slide, slideNum, total) =>
+        renderSlide(slide, scenario, theme, slideNum, total, runId)
+      }
+      exportFilename={`Brahma-${runId}-Insights`}
+    />
+  );
+}
+
+function DeckStatus({ theme, status, detail }) {
+  const tone = status === 'error' ? theme.neg : theme.fg2;
+  return (
+    <div
+      style={{
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 14,
+        flexDirection: 'column',
+      }}
+    >
+      <BrahmaMark size={36} color={status === 'error' ? theme.neg : theme.primary} />
+      <div
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          letterSpacing: 2,
+          fontWeight: 700,
+          color: tone,
+          textTransform: 'uppercase',
+        }}
+      >
+        Insights · {status}
+      </div>
+      <div style={{ fontSize: 14, color: theme.fg2, maxWidth: 420, textAlign: 'center' }}>
+        {detail}
+      </div>
+    </div>
   );
 }
 
@@ -92,7 +151,7 @@ function NotYetReady({ theme, scenario }) {
           }}
         >
           Brahma generates a tailored deck once the {scenario.problemType} pipeline finishes.
-          Switch to the <b style={{ color: theme.fg }}>Running</b> tab and let the 13 stages
+          Switch to the <b style={{ color: theme.fg }}>Running</b> tab and let the stages
           complete — Insights unlocks automatically.
         </p>
       </div>

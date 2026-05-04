@@ -203,7 +203,9 @@ export default function BrahmaShell() {
             <InsightsDeck
               scenario={scenario}
               theme={theme}
-              complete={tweaks.stageIdx >= stages.length}
+              complete={realRunId ? !!report : tweaks.stageIdx >= stages.length}
+              runId={realRunId}
+              hasReport={!!report}
             />
           </Suspense>
         );

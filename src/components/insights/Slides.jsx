@@ -174,13 +174,14 @@ function SlideFooter({ theme, scenario, source, slideNum, totalSlides, light }) 
 // Slide template registry
 // ══════════════════════════════════════════════════════════════════════
 
-export function renderSlide(slide, scenario, theme, slideNum, totalSlides) {
-  const ctx = { slide, scenario, theme, slideNum, totalSlides };
+export function renderSlide(slide, scenario, theme, slideNum, totalSlides, runId = null) {
+  const ctx = { slide, scenario, theme, slideNum, totalSlides, runId };
   switch (slide.kind) {
     case 'cover':              return <CoverSlide {...ctx} />;
     case 'data-overview':      return <DataOverviewSlide {...ctx} />;
     case 'action-title':       return <ActionTitleSlide {...ctx} />;
     case 'finding-with-chart': return <FindingWithChartSlide {...ctx} />;
+    case 'engine-chart':       return <EngineChartSlide {...ctx} />;
     case 'leaderboard':        return <LeaderboardSlide {...ctx} />;
     case 'performance-hero':   return <PerformanceHeroSlide {...ctx} />;
     case 'shap-deep-dive':     return <ShapDeepDiveSlide {...ctx} />;
@@ -403,6 +404,63 @@ function FindingWithChartSlide({ slide, scenario, theme, slideNum, totalSlides }
             <div style={{ color: theme.fg3, fontSize: 12, alignSelf: 'center', margin: 'auto' }}>
               chart not available
             </div>
+          )}
+        </div>
+      </div>
+
+      <SlideFooter
+        theme={theme}
+        scenario={scenario}
+        source={slide.source}
+        slideNum={slideNum}
+        totalSlides={totalSlides}
+      />
+    </SlideFrame>
+  );
+}
+
+// ── 4b. ENGINE CHART (real runs) ──────────────────────────────────────
+
+function EngineChartSlide({ slide, scenario, theme, slideNum, totalSlides, runId }) {
+  const src = runId && slide.path
+    ? `/api/pipelines/${encodeURIComponent(runId)}/files/${slide.path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}`
+    : null;
+  return (
+    <SlideFrame theme={theme} accent>
+      <Kicker theme={theme}>Brahma · live engine output</Kicker>
+      <ActionTitle theme={theme}>{slide.title}</ActionTitle>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 32, flex: 1, minHeight: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, justifyContent: 'center' }}>
+          {(slide.bullets || []).map((b, i) => (
+            <Bullet key={i} theme={theme} index={i + 1}>
+              {b}
+            </Bullet>
+          ))}
+        </div>
+        <div
+          style={{
+            background: theme.bg === '#0B1020' ? '#0B1020' : '#F9FAFB',
+            border: `1px solid ${theme.border}`,
+            borderRadius: 12,
+            padding: 12,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 240,
+          }}
+        >
+          {src ? (
+            <img
+              src={src}
+              alt={slide.title}
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
+            />
+          ) : (
+            <div style={{ color: theme.fg3, fontSize: 12 }}>chart unavailable</div>
           )}
         </div>
       </div>

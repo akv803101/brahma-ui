@@ -88,6 +88,8 @@ export const pipelinesApi = {
       method: 'POST',
       body: JSON.stringify({ inputs }),
     }),
+  insights: (runId) =>
+    request(`/pipelines/${encodeURIComponent(runId)}/insights`, { method: 'POST' }),
   /**
    * URL string for an output file. Use directly in <img src="...">.
    * Cookie auth flows automatically since same-origin via Vite proxy.

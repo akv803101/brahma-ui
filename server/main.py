@@ -851,6 +851,134 @@ def get_report(
     }
 
 
+@app.post("/api/pipelines/{run_id}/insights")
+def generate_insights(
+    run_id: str,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
+    """
+    Generate (or return cached) executive insights deck for a real run.
+
+    Claude reads the run's narrative + leaderboard + chart list and
+    returns a structured slides[] array using kinds:
+       cover, action-title, engine-chart, recommendation, next-steps
+    The frontend renders slides via the existing renderSlide pipeline.
+    """
+    if run_id not in _RUNS:
+        raise HTTPException(404, f"Unknown run: {run_id}")
+    if _RUNS[run_id].get("userId") not in (None, user.id):
+        raise HTTPException(403, "This run belongs to a different user.")
+    run = _RUNS[run_id]
+    if run.get("mode") != "real":
+        raise HTTPException(400, "Insights are only available for real runs.")
+
+    # Cache: return previously generated deck if present
+    cached = run.get("insights")
+    if cached:
+        return {"runId": run_id, "slides": cached, "cached": True}
+
+    repo_root = Path(__file__).resolve().parent.parent
+    run_dir = repo_root / "runs" / run_id
+    nm = run_dir / "narrative.md"
+    narrative = nm.read_text(encoding="utf-8") if nm.exists() else ""
+    out_root = run_dir / "outputs"
+    charts = _enumerate_charts(out_root)
+    leaderboard: list[dict[str, Any]] = []
+    lb = out_root / "data" / "leaderboard.csv"
+    if lb.exists():
+        try:
+            import pandas as pd
+            leaderboard = pd.read_csv(lb).to_dict("records")
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not leaderboard and not charts:
+        raise HTTPException(409, "Run hasn't produced enough output yet for an insights deck.")
+
+    slides = _generate_insights_with_claude(run["goal"], narrative, leaderboard, charts)
+    run["insights"] = slides
+    return {"runId": run_id, "slides": slides, "cached": False}
+
+
+def _generate_insights_with_claude(
+    goal: str,
+    narrative: str,
+    leaderboard: list[dict[str, Any]],
+    charts: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Ask Claude Haiku for an exec deck. Returns parsed slides[] list."""
+    from .brahma_bridge import get_engine
+    engine = get_engine()
+    model = os.getenv("BRAHMA_INSIGHTS_MODEL", "claude-haiku-4-5-20251001")
+
+    chart_lines = "\n".join(
+        f"  - kind={c['kind']}, category={c['category']}, path={c['path']}, title={c['title']}"
+        for c in charts
+    )
+    leader_summary = "\n".join(
+        f"  - {row.get('model') or row.get('name') or 'row'}: " +
+        ", ".join(f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
+                  for k, v in row.items() if k != "model" and k != "name")
+        for row in leaderboard[:6]
+    )
+
+    system = (
+        "You are Brahma, generating a McKinsey-style executive insights deck "
+        "for a finished ML pipeline. Output STRICTLY valid JSON: a single object "
+        '{"slides": [...]} with 8-12 slides. Each slide must use one of these kinds: '
+        '"cover", "action-title", "engine-chart", "recommendation", "next-steps".\n\n'
+        "Slide schemas:\n"
+        '  {"kind":"cover","title":"...","subtitle":"..."}\n'
+        '  {"kind":"action-title","title":"<takeaway sentence>","subtitle":"<optional>"}\n'
+        '  {"kind":"engine-chart","title":"<takeaway>","path":"<path from charts list>","bullets":["..."],"source":"<optional>"}\n'
+        '  {"kind":"recommendation","title":"...","actions":[{"verb":"...","target":"...","reason":"..."}]}\n'
+        '  {"kind":"next-steps","title":"...","items":["..."]}\n\n'
+        "Rules:\n"
+        " - Slide titles state the takeaway, not the topic. ✓ 'Frequency drives 55% of churn.' ✗ 'Feature analysis.'\n"
+        " - 'engine-chart' path MUST come from the supplied charts list verbatim.\n"
+        " - Use 4-6 engine-chart slides covering the most decision-relevant charts (evaluation > validation > eda).\n"
+        " - First slide is always 'cover'. Last slide is always 'next-steps'.\n"
+        " - Output JSON only. No markdown fences. No prose before/after."
+    )
+
+    user_msg = (
+        f"GOAL: {goal}\n\n"
+        f"NARRATIVE (Brahma's reasoning during the run):\n{narrative[:3000]}\n\n"
+        f"LEADERBOARD ({len(leaderboard)} candidates):\n{leader_summary}\n\n"
+        f"CHARTS PRODUCED ({len(charts)}):\n{chart_lines}\n\n"
+        "Generate the deck now."
+    )
+
+    resp = engine.client.messages.create(
+        model=model,
+        max_tokens=4096,
+        system=system,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    text = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+    # Strip accidental markdown fences
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text.split("\n", 1)[1] if "\n" in text else text
+        text = text.rsplit("```", 1)[0]
+    import json as _json
+    try:
+        data = _json.loads(text)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Claude returned invalid JSON: {e}") from e
+    slides = data.get("slides", [])
+    if not isinstance(slides, list) or not slides:
+        raise HTTPException(502, "Claude returned no slides.")
+    # Validate engine-chart paths exist in our charts
+    valid_paths = {c["path"] for c in charts}
+    for s in slides:
+        if s.get("kind") == "engine-chart" and s.get("path") not in valid_paths:
+            # Drop invalid path; downgrade to action-title so deck still renders
+            s["kind"] = "action-title"
+            s.pop("path", None)
+    return slides
+
+
 @app.post("/api/pipelines/{run_id}/predict")
 def predict(
     run_id: str,
