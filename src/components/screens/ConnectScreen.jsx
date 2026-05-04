@@ -111,14 +111,14 @@ const DATA_SOURCES = [
   },
   {
     id: 'gsheet',
-    label: 'Google Sheets (validation only)',
-    hint: 'shipping in chunk F',
+    label: 'Google Sheets',
+    hint: 'sheet URL · tab',
     backend: 'google_sheets',
-    liveProbe: false,
+    liveProbe: true,
     fields: [
-      { key: 'url',              label: 'Sheet URL',            def: '' },
-      { key: 'tab',              label: 'Tab',                  def: 'Sheet1' },
-      { key: 'credentials_json', label: 'Service account JSON', def: '', secret: true },
+      { key: 'url',              label: 'Sheet URL',                              def: '' },
+      { key: 'tab',              label: 'Tab name',                               def: 'Sheet1' },
+      { key: 'credentials_json', label: 'Service account JSON (paste full file)', def: '', secret: true, multiline: true },
     ],
   },
   {

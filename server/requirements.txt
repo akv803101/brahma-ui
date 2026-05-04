@@ -30,6 +30,12 @@ google-cloud-bigquery>=3.20
 # explicitly so we don't lose access if that connector changes.
 boto3>=1.34
 
+# Google Sheets — used by /test-connection probes for sourceConfig.type='google_sheets'
+# (upstream engine uses this driver inside stage scripts too).
+# google-auth comes transitively via google-cloud-bigquery; gspread adds the
+# Sheets-specific wrapper.
+gspread>=6.1
+
 # Google OAuth
 authlib>=1.3
 httpx>=0.27

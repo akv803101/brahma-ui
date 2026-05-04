@@ -516,7 +516,9 @@ def test_connection(
             return _probe_bigquery(cfg)
         if src == "s3":
             return _probe_s3(cfg)
-        # mysql/sheets/rest covered in F4+
+        if src == "google_sheets":
+            return _probe_google_sheets(cfg)
+        # mysql/rest covered in F5+
         return {
             "ok": True,
             "source": src,
@@ -770,6 +772,84 @@ def _probe_s3(cfg: dict[str, Any]) -> dict[str, Any]:
             "file_format": cfg.get("file_format"),
         },
     }
+
+
+def _probe_google_sheets(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Open the spreadsheet at cfg.url with the user-pasted service account
+    JSON, find the worksheet named cfg.tab, and report its basic shape
+    (rows × cols + header preview).
+
+    The probe never downloads the full sheet body — it only inspects
+    metadata + the header row. The actual full read happens inside the
+    upstream stage script during the run.
+    """
+    import json as _json
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    raw = cfg["credentials_json"]
+    if isinstance(raw, str):
+        try:
+            info = _json.loads(raw)
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False,
+                "source": "google_sheets",
+                "message": f"credentials_json is not valid JSON: {e}",
+            }
+    else:
+        info = raw
+
+    try:
+        creds = Credentials.from_service_account_info(
+            info,
+            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
+        )
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "source": "google_sheets",
+            "message": f"Could not load service account: {e}",
+        }
+
+    try:
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_url(cfg["url"])
+        ws = sh.worksheet(cfg.get("tab") or "Sheet1")
+        # row_count and col_count are sheet capacity — get the actual
+        # used header row to give the user something concrete.
+        header = ws.row_values(1)
+        return {
+            "ok": True,
+            "source": "google_sheets",
+            "message": f"Connected · {ws.row_count} rows × {ws.col_count} cols capacity · {len(header)} header columns",
+            "sample": {
+                "spreadsheet_title": sh.title,
+                "tab": ws.title,
+                "row_capacity": ws.row_count,
+                "col_capacity": ws.col_count,
+                "header": header[:20],  # cap to first 20 column names
+            },
+        }
+    except gspread.exceptions.SpreadsheetNotFound as e:
+        return {
+            "ok": False,
+            "source": "google_sheets",
+            "message": f"Spreadsheet not found / share with the service account: {e}",
+        }
+    except gspread.exceptions.WorksheetNotFound as e:
+        return {
+            "ok": False,
+            "source": "google_sheets",
+            "message": f"Worksheet (tab) not found: {e}",
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "source": "google_sheets",
+            "message": f"Sheets probe failed: {e}",
+        }
 
 
 def _probe_sqlite(cfg: dict[str, Any]) -> dict[str, Any]:
