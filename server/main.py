@@ -436,6 +436,39 @@ class TestConnectionBody(BaseModel):
 
 
 # Per-type required fields for sourceConfig validation
+# Row count thresholds at which we warn the user that the engine will
+# pull the whole table into memory in one shot. Above WARN, slower runs.
+# Above DANGER, the FastAPI process is likely to OOM mid-ingestion.
+_ROW_WARN_AT = 500_000
+_ROW_DANGER_AT = 5_000_000
+
+
+def _classify_size(n: int | None) -> tuple[str | None, str | None]:
+    """Returns (warning_message, severity) given a row count, or (None, None)."""
+    if n is None:
+        return None, None
+    if n >= _ROW_DANGER_AT:
+        return (
+            f"⚠ {n:,} rows — that's likely too large for an in-memory load. "
+            f"Replace the table with a sampled SELECT (e.g. "
+            f"SELECT * FROM <table> ORDER BY RANDOM() LIMIT 200000) before "
+            f"running, or expect the engine to run out of memory.",
+            "danger",
+        )
+    if n >= _ROW_WARN_AT:
+        return (
+            f"{n:,} rows — Brahma will load all of them. For faster runs, "
+            f"replace the table name with SELECT * FROM <table> ... LIMIT 200000.",
+            "warn",
+        )
+    return None, None
+
+
+def _is_bare_table(toq: str) -> bool:
+    """True if table_or_query looks like a table name we can safely COUNT."""
+    return not toq.strip().lower().startswith("select")
+
+
 _REQUIRED_SOURCE_FIELDS: dict[str, tuple[str, ...]] = {
     "file":       ("filename", "temp_path"),
     "postgresql": ("host", "port", "database", "user", "password", "table_or_query"),
@@ -584,11 +617,26 @@ def _probe_postgres(cfg: dict[str, Any]) -> dict[str, Any]:
             cur.execute(preview_sql)
             cols = [d.name for d in cur.description] if cur.description else []
             row = cur.fetchone()
+            # Cheap row-count for bare table names (skip if user wrote a SELECT).
+            row_count: int | None = None
+            if _is_bare_table(toq):
+                try:
+                    cur.execute(f"SELECT count(*) FROM {toq}")
+                    row_count = cur.fetchone()[0]
+                except Exception:  # noqa: BLE001
+                    pass
+            warning, severity = _classify_size(row_count)
             return {
                 "ok": True,
                 "source": "postgresql",
-                "message": f"Connected · {len(cols)} columns",
-                "sample": {"columns": cols, "first_row_present": row is not None},
+                "message": f"Connected · {len(cols)} columns" + (f" · {row_count:,} rows" if row_count is not None else ""),
+                "warning": warning,
+                "severity": severity,
+                "sample": {
+                    "columns": cols,
+                    "first_row_present": row is not None,
+                    "row_count": row_count,
+                },
             }
         except Exception as e:  # noqa: BLE001
             return {
@@ -636,16 +684,27 @@ def _probe_snowflake(cfg: dict[str, Any]) -> dict[str, Any]:
             cur.execute(preview_sql)
             cols = [d.name for d in cur.description] if cur.description else []
             row = cur.fetchone()
+            row_count: int | None = None
+            if _is_bare_table(toq):
+                try:
+                    cur.execute(f"SELECT count(*) FROM {toq}")
+                    row_count = cur.fetchone()[0]
+                except Exception:  # noqa: BLE001
+                    pass
+            warning, severity = _classify_size(row_count)
             return {
                 "ok": True,
                 "source": "snowflake",
-                "message": f"Connected · {len(cols)} columns",
+                "message": f"Connected · {len(cols)} columns" + (f" · {row_count:,} rows" if row_count is not None else ""),
+                "warning": warning,
+                "severity": severity,
                 "sample": {
                     "columns": cols,
                     "first_row_present": row is not None,
                     "warehouse": cfg["warehouse"],
                     "database": cfg["database"],
                     "schema": cfg["schema"],
+                    "row_count": row_count,
                 },
             }
         except Exception as e:  # noqa: BLE001
@@ -712,15 +771,44 @@ def _probe_bigquery(cfg: dict[str, Any]) -> dict[str, Any]:
         job = client.query(preview_sql)
         rows = list(job.result(timeout=15))
         cols = [f.name for f in job.schema] if job.schema else []
+        # Row count via __TABLES__ when user gave a bare table name. Skip
+        # for full SELECTs (would re-run the query just for count, defeats
+        # the cost-conscious instinct of BigQuery users).
+        row_count: int | None = None
+        if _is_bare_table(cfg["table_or_query"]):
+            bare = cfg["table_or_query"].strip()
+            # bare may be 'table' or 'project.dataset.table'
+            if "." not in bare:
+                fq = f"`{cfg['project']}.{cfg['dataset']}.__TABLES__`"
+                count_sql = (
+                    f"SELECT row_count FROM {fq} WHERE table_id = @t LIMIT 1"
+                )
+                try:
+                    from google.cloud.bigquery import QueryJobConfig, ScalarQueryParameter
+                    job2 = client.query(
+                        count_sql,
+                        job_config=QueryJobConfig(query_parameters=[
+                            ScalarQueryParameter("t", "STRING", bare),
+                        ]),
+                    )
+                    res = list(job2.result(timeout=10))
+                    if res:
+                        row_count = int(res[0]["row_count"])
+                except Exception:  # noqa: BLE001
+                    pass
+        warning, severity = _classify_size(row_count)
         return {
             "ok": True,
             "source": "bigquery",
-            "message": f"Connected · {len(cols)} columns",
+            "message": f"Connected · {len(cols)} columns" + (f" · {row_count:,} rows" if row_count is not None else ""),
+            "warning": warning,
+            "severity": severity,
             "sample": {
                 "columns": cols,
                 "first_row_present": bool(rows),
                 "project": cfg["project"],
                 "dataset": cfg["dataset"],
+                "row_count": row_count,
             },
         }
     except Exception as e:  # noqa: BLE001

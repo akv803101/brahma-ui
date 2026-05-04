@@ -277,16 +277,16 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
   );
   useEffect(() => {
     setFieldVals(Object.fromEntries(source.fields.map((f) => [f.key, f.def])));
-    setProbe({ status: 'idle', message: '', sample: null });
+    setProbe({ status: 'idle', message: '', sample: null, warning: null, severity: null });
   }, [sourceId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const [goal, setGoal] = useState(scenario.goal);
-  // Probe state: { status: 'idle' | 'testing' | 'ok' | 'error', message, sample }
-  const [probe, setProbe] = useState({ status: 'idle', message: '', sample: null });
+  // Probe state: { status: 'idle' | 'testing' | 'ok' | 'error', message, sample, warning, severity }
+  const [probe, setProbe] = useState({ status: 'idle', message: '', sample: null, warning: null, severity: null });
 
   useEffect(() => {
     setGoal(scenario.goal);
-    setProbe({ status: 'idle', message: '', sample: null });
+    setProbe({ status: 'idle', message: '', sample: null, warning: null, severity: null });
   }, [scenario.id]);
 
   const connected = probe.status === 'ok';
@@ -294,7 +294,7 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
   const step2Done = connected && goal.trim().length > 10;
 
   const handleTestConnection = async () => {
-    setProbe({ status: 'testing', message: '', sample: null });
+    setProbe({ status: 'testing', message: '', sample: null, warning: null, severity: null });
     const sourceConfig = buildSourceConfig(source, fieldVals);
     try {
       const res = await pipelinesApi.testConnection({ sourceConfig });
@@ -302,12 +302,16 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
         status: res.ok ? 'ok' : 'error',
         message: res.message || (res.ok ? 'Connected.' : 'Connection failed.'),
         sample: res.sample || null,
+        warning: res.warning || null,
+        severity: res.severity || null,
       });
     } catch (e) {
       setProbe({
         status: 'error',
         message: e instanceof ApiError ? e.message : 'Network error.',
         sample: null,
+        warning: null,
+        severity: null,
       });
     }
   };
@@ -437,7 +441,7 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
                   value={fieldVals[f.key] ?? ''}
                   onChange={(e) => {
                     setFieldVals((v) => ({ ...v, [f.key]: e.target.value }));
-                    setProbe({ status: 'idle', message: '', sample: null });
+                    setProbe({ status: 'idle', message: '', sample: null, warning: null, severity: null });
                   }}
                   rows={6}
                   spellCheck={false}
@@ -462,7 +466,7 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
                   value={fieldVals[f.key] ?? ''}
                   onChange={(e) => {
                     setFieldVals((v) => ({ ...v, [f.key]: e.target.value }));
-                    setProbe({ status: 'idle', message: '', sample: null });
+                    setProbe({ status: 'idle', message: '', sample: null, warning: null, severity: null });
                   }}
                   style={{
                     width: '100%',
@@ -524,6 +528,29 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
             </span>
           )}
         </div>
+        {probe.warning && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: '10px 12px',
+              borderRadius: 8,
+              background: probe.severity === 'danger'
+                ? (isDark ? '#7F1D1D33' : '#FEE2E2')
+                : (isDark ? '#78350F33' : '#FEF3C7'),
+              border: `1px solid ${probe.severity === 'danger'
+                ? (isDark ? '#FCA5A555' : '#FCA5A5')
+                : (isDark ? '#FBBF2455' : '#FCD34D')}`,
+              color: probe.severity === 'danger'
+                ? (isDark ? '#FCA5A5' : '#991B1B')
+                : (isDark ? '#FCD34D' : '#92400E'),
+              fontSize: 12,
+              fontFamily: 'var(--font-mono)',
+              lineHeight: 1.55,
+            }}
+          >
+            {probe.warning}
+          </div>
+        )}
       </StepCard>
 
       {/* ─── STEP 2 · Goal ─────────────────────────────────────────── */}
