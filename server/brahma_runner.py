@@ -69,10 +69,16 @@ class BrahmaRunner:
         goal: str,
         connection_config: dict[str, Any],
         out_root: Path,
+        project_id: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         """
         Execute one pipeline run as a generator of event dicts.
         Caller (FastAPI SSE handler) re-emits each event to the client.
+
+        project_id (H3): when set, the runner queries feedback rows for
+        that project and includes a calibration block in Claude's
+        narrative prompt — so each new narrative knows where the model
+        has been wrong and can hedge accordingly.
         """
         run_dir = (out_root / run_id).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -88,7 +94,7 @@ class BrahmaRunner:
 
         # ── Phase 1 — narrative
         try:
-            yield from self._stream_narrative(goal, connection_config, run_dir)
+            yield from self._stream_narrative(goal, connection_config, run_dir, project_id)
         except Exception as e:  # noqa: BLE001 — narrative failure shouldn't kill the run
             yield {"event": "narrative_error", "error": str(e), "type": type(e).__name__}
 
@@ -135,7 +141,11 @@ class BrahmaRunner:
     # ── Phase 1 helpers ────────────────────────────────────────────────
 
     def _stream_narrative(
-        self, goal: str, connection_config: dict[str, Any], run_dir: Path
+        self,
+        goal: str,
+        connection_config: dict[str, Any],
+        run_dir: Path,
+        project_id: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Stream Claude's narrative for the run; persist full text to run_dir/narrative.md."""
         masked = _mask_connection(connection_config)
@@ -150,10 +160,13 @@ class BrahmaRunner:
         finally:
             os.chdir(cwd_save)
 
+        feedback_block = _build_feedback_block(project_id) if project_id else ""
+
         user_msg = (
             f"Wake Up Brahma\n\n"
             f"GOAL: {goal}\n\n"
             f"DATA SOURCE: {source_desc}\n\n"
+            f"{feedback_block}"
             f"Provide your understanding, identify the problem type, and explain the pipeline "
             f"you will run. Be concise — bullet points or short paragraphs. The actual stage "
             f"execution will happen after this narrative."
@@ -302,6 +315,82 @@ class BrahmaRunner:
 
 
 # ── Module-level helpers ─────────────────────────────────────────────
+
+
+def _build_feedback_block(project_id: int) -> str:
+    """
+    Pull feedback stats for a project and format them as a calibration
+    section to inject into Claude's narrative user_msg. Empty string
+    returned when no feedback exists yet (clean noop on first run).
+
+    Sample output:
+        PRIOR HUMAN FEEDBACK ON THIS PROJECT (last 12 corrections):
+          - accuracy: 67% (8 / 12)
+          - by tier: HIGH 4/6 correct, MEDIUM 3/4, LOW 1/2
+          - latest 3 misses:
+            * predicted CHURN (HIGH, p=0.82) → actual: retain
+            * predicted CHURN (HIGH, p=0.74) → actual: retain
+            * predicted retain (LOW, p=0.18) → actual: CHURN
+
+        Use this to calibrate confidence in the narrative — flag known
+        weaknesses, hedge tier boundaries, suggest threshold tuning if
+        a tier has > 30% miss rate.
+    """
+    try:
+        from .db import SessionLocal, Feedback
+    except Exception:  # noqa: BLE001
+        return ""
+
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(Feedback)
+            .filter(Feedback.project_id == project_id)
+            .order_by(Feedback.created_at.desc())
+            .limit(50)
+            .all()
+        )
+    finally:
+        session.close()
+
+    if not rows:
+        return ""
+
+    total = len(rows)
+    correct = sum(1 for r in rows if r.was_correct)
+    by_tier: dict[str, dict[str, int]] = {}
+    for r in rows:
+        tier = (r.predicted_tier or "—").upper()
+        slot = by_tier.setdefault(tier, {"correct": 0, "incorrect": 0})
+        slot["correct" if r.was_correct else "incorrect"] += 1
+    misses = [r for r in rows if not r.was_correct][:3]
+
+    by_tier_lines = ", ".join(
+        f"{t} {v['correct']}/{v['correct']+v['incorrect']} correct"
+        for t, v in by_tier.items()
+    )
+
+    miss_lines = ""
+    if misses:
+        formatted_misses = []
+        for m in misses:
+            pred = m.predicted_label or ("positive" if (m.predicted_score or 0) >= 0.5 else "negative")
+            actual = m.actual_value or "different from prediction"
+            formatted_misses.append(
+                f"    * predicted {pred} ({(m.predicted_tier or '—').upper()}, "
+                f"p={m.predicted_score:.2f}) → actual: {actual}"
+            )
+        miss_lines = "  - latest 3 misses:\n" + "\n".join(formatted_misses) + "\n"
+
+    return (
+        f"PRIOR HUMAN FEEDBACK ON THIS PROJECT (last {total} corrections):\n"
+        f"  - accuracy: {(correct / total * 100):.0f}% ({correct}/{total})\n"
+        f"  - by tier: {by_tier_lines}\n"
+        f"{miss_lines}"
+        f"\nUse this to calibrate confidence in the narrative — flag known "
+        f"weaknesses, hedge tier boundaries, suggest threshold tuning if a "
+        f"tier has > 30% miss rate.\n\n"
+    )
 
 
 def _load_or_capture_snapshots(brahma_dir: Path) -> dict[str, str]:

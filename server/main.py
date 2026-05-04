@@ -1236,6 +1236,7 @@ async def _real_event_generator(run_id: str, run: dict[str, Any]):
                 goal=run["goal"],
                 connection_config=run["sourceConfig"],
                 out_root=runs_root,
+                project_id=run.get("projectId"),
             ):
                 q.put(event)
         except Exception as e:  # noqa: BLE001
