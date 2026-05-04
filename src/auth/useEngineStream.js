@@ -42,6 +42,9 @@ const initialState = {
   // Per-stage log line buffers, keyed by stage index. Lines accumulate as
   // `stage_log` events stream in; capped to the last N to keep state lean.
   stageLogs: {},
+  // Set when stage_failed fires — { index, label, logPath } — so the UI
+  // can pin the log tail to the failure (G3).
+  failedStage: null,
   leaderboard: null,
   outputs: null,
   elapsedS: null,
@@ -148,8 +151,17 @@ function reducer(state, action) {
     }
 
     case 'stage_failed': {
-      // Already marked failed in stage_done; just record the log path
-      return { ...state, events };
+      // Already marked failed in stage_done; record log path and pin
+      // the index so the UI can prioritize this stage's log tail (G3).
+      return {
+        ...state,
+        failedStage: {
+          index: data.index,
+          label: data.label,
+          logPath: data.log,
+        },
+        events,
+      };
     }
 
     case 'outputs_copied':

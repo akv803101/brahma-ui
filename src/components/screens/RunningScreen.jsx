@@ -65,8 +65,10 @@ function RealRunning({ scenario, theme, runId, onComplete }) {
   // Reference `tick` so React knows this render depends on it
   void tick;
 
-  const statusLabel =
-    stream.status === 'connecting'
+  const failedAt = stream.failedStage;
+  const statusLabel = failedAt
+    ? `failed at stage ${String(failedAt.index + 1).padStart(2, '0')} · ${failedAt.label}`
+    : stream.status === 'connecting'
       ? 'connecting…'
       : stream.status === 'streaming'
       ? `running · ${stages.filter((s) => s.status === 'done').length}/${stages.length}`
@@ -89,7 +91,7 @@ function RealRunning({ scenario, theme, runId, onComplete }) {
       {/* LEFT · Pipeline list */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-          <PulseDot color={stream.status === 'error' ? theme.neg : theme.primary} />
+          <PulseDot color={(stream.status === 'error' || failedAt) ? theme.neg : theme.primary} />
           <div
             style={{
               fontSize: 11,
@@ -333,15 +335,17 @@ function RealRunning({ scenario, theme, runId, onComplete }) {
 }
 
 /**
- * Bottom panel of the right pane — the live tail of stdout from the
- * stage subprocess that's currently executing. Picks the running stage
- * (or, after all stages finish, the last one). Shows last ~7 lines.
+ * Bottom panel of the right pane — live tail of stdout from the active
+ * stage subprocess. G3: when a stage has failed, this panel pins to
+ * that stage with a red frame, larger height, and ~15 lines of context
+ * so the user can read the traceback without hunting.
  */
 function StageLogTail({ stream, stages }) {
+  const failed = stream.failedStage;
   const activeIndex = (() => {
+    if (failed && Number.isInteger(failed.index)) return failed.index;
     const running = stages.findIndex((s) => s.status === 'running');
     if (running >= 0) return running;
-    // Fall back to the last stage that has any logs (most recent)
     const indices = Object.keys(stream.stageLogs || {}).map(Number).sort((a, b) => b - a);
     return indices[0] ?? -1;
   })();
@@ -349,16 +353,21 @@ function StageLogTail({ stream, stages }) {
 
   const lines = (stream.stageLogs && stream.stageLogs[activeIndex]) || [];
   if (!lines.length) return null;
-  const tail = lines.slice(-7);
+  const isFailed = !!failed && failed.index === activeIndex;
+  const tail = lines.slice(isFailed ? -15 : -7);
   const stage = stages[activeIndex];
+
+  const accent = isFailed ? '#F87171' : '#60A5FA';
+  const headerBg = isFailed ? '#3F1313' : '#0E1626';
+  const headerBorder = isFailed ? '#7F1D1D' : '#1F2937';
 
   return (
     <div
       style={{
-        borderTop: '1px solid #1F2937',
-        background: '#070D1A',
-        maxHeight: 140,
-        overflow: 'hidden',
+        borderTop: `1px solid ${isFailed ? '#7F1D1D' : '#1F2937'}`,
+        background: isFailed ? '#1A0808' : '#070D1A',
+        maxHeight: isFailed ? 240 : 140,
+        overflow: 'auto',
         flexShrink: 0,
       }}
     >
@@ -367,26 +376,49 @@ function StageLogTail({ stream, stages }) {
           padding: '6px 16px',
           fontSize: 10,
           letterSpacing: 1.4,
-          color: '#9CA3AF',
+          color: isFailed ? '#FCA5A5' : '#9CA3AF',
           fontFamily: 'var(--font-mono)',
           fontWeight: 700,
           textTransform: 'uppercase',
-          background: '#0E1626',
-          borderBottom: '1px solid #1F2937',
+          background: headerBg,
+          borderBottom: `1px solid ${headerBorder}`,
           display: 'flex',
           gap: 8,
           alignItems: 'center',
+          position: 'sticky',
+          top: 0,
         }}
       >
-        <span style={{ color: '#60A5FA' }}>›</span>
-        <span>stage {String(activeIndex + 1).padStart(2, '0')} log · {stage?.name || ''}</span>
+        <span style={{ color: accent }}>{isFailed ? '✕' : '›'}</span>
+        <span>
+          stage {String(activeIndex + 1).padStart(2, '0')}
+          {' '}
+          {isFailed ? 'FAILED' : 'log'}
+          {' · '}
+          {stage?.name || failed?.label || ''}
+        </span>
+        {isFailed && (
+          <span
+            style={{
+              marginLeft: 'auto',
+              fontSize: 9,
+              color: '#FCA5A5',
+              opacity: 0.85,
+              textTransform: 'none',
+              letterSpacing: 0,
+              fontWeight: 500,
+            }}
+          >
+            full log: {failed?.logPath?.split(/[\\/]/).pop()}
+          </span>
+        )}
       </div>
       <div
         style={{
           padding: '8px 16px',
           fontFamily: 'var(--font-mono)',
-          fontSize: 11.5,
-          color: '#CBD5E1',
+          fontSize: isFailed ? 12 : 11.5,
+          color: isFailed ? '#FCA5A5' : '#CBD5E1',
           lineHeight: 1.55,
           whiteSpace: 'pre-wrap',
         }}
@@ -395,10 +427,11 @@ function StageLogTail({ stream, stages }) {
           <div
             key={i}
             style={{
-              opacity: i === tail.length - 1 ? 1 : 0.5 + (i / tail.length) * 0.5,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
+              opacity: isFailed ? 1 : (i === tail.length - 1 ? 1 : 0.5 + (i / tail.length) * 0.5),
+              overflow: isFailed ? 'visible' : 'hidden',
+              textOverflow: isFailed ? 'clip' : 'ellipsis',
+              whiteSpace: isFailed ? 'pre-wrap' : 'nowrap',
+              wordBreak: isFailed ? 'break-word' : 'normal',
             }}
           >
             {l}
