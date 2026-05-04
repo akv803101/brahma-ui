@@ -1,54 +1,66 @@
 # ─────────────────────────────────────────────────────────────────────
 # Brahma UI — Render.com deployment blueprint
 #
-# Single Web Service that handles BOTH the React frontend AND the
-# FastAPI backend on the same domain (e.g. https://brahma-ui.onrender.com).
-# Same-domain → cookies just work, no SameSite=None gymnastics, OAuth
-# callback lands cleanly on the same origin.
+# Single Web Service that serves BOTH the React frontend (compiled to
+# dist/) AND the FastAPI backend (uvicorn) on the same domain. Same
+# origin → cookies just work, no SameSite=None gymnastics, OAuth
+# callback lands cleanly.
 #
-# Usage:
-#   1. Render Dashboard → Blueprints → New Blueprint Instance
-#   2. Connect the akv803101/brahma-ui repo
-#   3. When prompted, paste the secret env vars (GOOGLE_CLIENT_ID,
-#      GOOGLE_CLIENT_SECRET, optional RESEND_API_KEY)
-#   4. Click Apply — first build takes ~5 min (npm + pip + Vite build)
+# After the initial blueprint apply, set these in the dashboard:
+#   - ANTHROPIC_API_KEY      (required — narrative + insights deck)
+#   - GOOGLE_CLIENT_ID       (required — Google login button)
+#   - GOOGLE_CLIENT_SECRET   (required — Google login button)
+#   - DATABASE_URL           (recommended — Neon/Render Postgres URL)
+#   - RESEND_API_KEY         (optional — email reset links)
+#   - BRAHMA_NARRATIVE_MODEL (optional — flip Haiku→Sonnet for narratives)
+#   - BRAHMA_INSIGHTS_MODEL  (optional — flip Haiku→Sonnet for decks)
 #
-# After first deploy:
-#   • If Render assigned a name OTHER than "brahma-ui" (i.e. the global
-#     default was taken), update FRONTEND_ORIGIN + BACKEND_ORIGIN in the
-#     dashboard env vars to the actual URL.
-#   • Add the deployed URL's /api/auth/google/callback path to Google
-#     Cloud Console → OAuth client → Authorized redirect URIs.
+# Plan choice:
+#   - free  : 512 MB RAM, sleeps after 15 min idle. Auth + UI work, but
+#             real engine runs (XGBoost, optuna 50 trials, SHAP) will OOM
+#             on the 5K-row demo dataset. OK for clicking around / login.
+#   - starter ($7/mo): 512 MB RAM, no sleep. Same RAM ceiling, but
+#             always-on means narrative + UI feel snappy.
+#   - standard ($25/mo): 2 GB RAM. Comfortable for 5K-200K row real runs.
+#             Recommended once real users start touching the engine.
 # ─────────────────────────────────────────────────────────────────────
 
 services:
   - type: web
     name: brahma-ui
     runtime: python
-    plan: free
+    plan: free          # bump to "standard" before exposing to real users
     region: oregon
     branch: main
     autoDeploy: true
 
-    # Build the React bundle, then install Python deps. Render's Python
-    # build environment ships with Node + npm, so this works without a
-    # separate runtime.
+    # Build the React bundle first, then init the upstream Brahma engine
+    # submodule (vendor/brahma/), then install BOTH requirements files:
+    # ours (server/requirements.txt) + upstream's (vendor/brahma/requirements.txt
+    # — pulls xgboost / optuna / shap / sklearn / pandas / etc. that the
+    # stage subprocesses run inline).
     buildCommand: |
+      set -e
+      git submodule update --init --recursive
       npm install
       npm run build
       pip install --upgrade pip
       pip install -r server/requirements.txt
+      pip install --no-deps -r vendor/brahma/requirements.txt || true
+      pip install anthropic xgboost optuna shap pyarrow scikit-learn pandas numpy matplotlib
 
     startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
 
-    # Render dropped persistent disks from the free tier. Two options:
-    #   1. Leave DATABASE_URL empty → ephemeral SQLite (good for demo;
-    #      data resets when the service spins down after 15min inactivity).
-    #   2. Set DATABASE_URL to a Neon / Render / Railway Postgres URL →
-    #      data persists forever. Free tier on Neon: 0.5 GB, no card needed.
+    # Render's free tier has no persistent disk, so runs/{id}/ outputs
+    # vanish when the service spins down (free) or restarts (starter).
+    # If you bump to "standard", uncomment the disk block below to make
+    # pipeline outputs (charts/leaderboards/models) survive restarts.
     #
-    # Either way, no disk block here.
+    # disk:
+    #   name: brahma-runs
+    #   mountPath: /opt/render/project/src/runs
+    #   sizeGB: 5
 
     envVars:
       - key: PYTHON_VERSION
@@ -56,13 +68,23 @@ services:
       - key: NODE_VERSION
         value: "20"
 
-      # ── Auth secrets — sync: false means "set this in the dashboard" ──
+      # ── Anthropic — required for narrative + insights deck (D2e) ──
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # ── Optional model overrides (Haiku is the cost-conscious default) ──
+      - key: BRAHMA_NARRATIVE_MODEL
+        sync: false
+      - key: BRAHMA_INSIGHTS_MODEL
+        sync: false
+
+      # ── Auth secrets ──
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
 
-      # JWT signing key — Render generates a fresh, never-committed value
+      # JWT signing key — Render generates a fresh value, not committed
       - key: JWT_SECRET
         generateValue: true
 
@@ -76,17 +98,15 @@ services:
       - key: COOKIE_SAMESITE
         value: lax
 
-      # ── URLs ──
-      # Adjust these in the Render dashboard if your service name differs
-      # from "brahma-ui" (Render appends a random suffix on collisions).
+      # ── URLs — adjust if Render assigns a non-default service name ──
       - key: FRONTEND_ORIGIN
         value: https://brahma-ui.onrender.com
       - key: BACKEND_ORIGIN
         value: https://brahma-ui.onrender.com
 
       # ── Database ──
-      # Leave empty for ephemeral SQLite (default).
-      # Set to a Postgres connection string (e.g. from Neon) for persistent data.
+      # Empty → ephemeral SQLite (data resets on every spin-down).
+      # Set to a Postgres URL (Neon free tier works) for persistence.
       # Format: postgresql://user:pass@host/dbname?sslmode=require
       - key: DATABASE_URL
         sync: false
