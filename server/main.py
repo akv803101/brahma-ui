@@ -411,6 +411,79 @@ app.add_middleware(
     https_only=os.getenv("COOKIE_SECURE", "false").lower() == "true",
 )
 
+
+# I2 — production hardening
+# ─────────────────────────
+# Allowed origins for state-changing /api/* requests. SameSite=lax already
+# blocks cookies on cross-origin POST, but verifying the Origin header
+# closes the gap as defense-in-depth and rejects forged Origin headers
+# from same-origin XSS payloads.
+_ALLOWED_ORIGINS: set[str] = {
+    o for o in (
+        _FRONTEND_ORIGIN,
+        os.getenv("BACKEND_ORIGIN"),
+        # Always allow local dev origins so vite proxy + FastAPI talk freely
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://localhost:5177",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8000",
+    ) if o
+}
+
+# Endpoints that can legitimately receive cross-origin requests (Google
+# redirects /api/auth/google/callback back to us with no Origin header).
+_ORIGIN_CHECK_EXEMPT: tuple[str, ...] = (
+    "/api/auth/google/callback",
+    "/api/auth/google/start",
+)
+
+
+@app.middleware("http")
+async def security_headers_middleware(request, call_next):
+    """
+    I2: prod hardening — verify Origin on state-changing /api/* requests
+    and stamp standard security headers on every response.
+    """
+    method = request.method.upper()
+    path = request.url.path
+
+    # Origin guard: only enforce for /api/* writes; skip OAuth callbacks
+    # and dev-mode where COOKIE_SECURE is false (running on http).
+    cookie_secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+    if (
+        cookie_secure
+        and path.startswith("/api/")
+        and method in ("POST", "PUT", "PATCH", "DELETE")
+        and not any(path.startswith(exempt) for exempt in _ORIGIN_CHECK_EXEMPT)
+    ):
+        origin = request.headers.get("origin")
+        # Browsers send Origin on cross-origin requests AND on same-origin
+        # POSTs in modern browsers. Treat missing Origin as suspicious in prod.
+        if origin and origin not in _ALLOWED_ORIGINS:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": f"Origin '{origin}' not allowed for this endpoint."},
+            )
+
+    response = await call_next(request)
+
+    # Standard security headers — applied to every response
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if cookie_secure:
+        # 1 year HSTS, only stamp when serving over HTTPS so we don't
+        # bake in a useless header in dev.
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+    return response
+
 app.include_router(auth_router)
 app.include_router(oauth_router)
 app.include_router(password_reset_router)
