@@ -518,7 +518,9 @@ def test_connection(
             return _probe_s3(cfg)
         if src == "google_sheets":
             return _probe_google_sheets(cfg)
-        # mysql/rest covered in F5+
+        if src == "rest_api":
+            return _probe_rest(cfg)
+        # mysql probe lands in a follow-up chunk
         return {
             "ok": True,
             "source": src,
@@ -850,6 +852,109 @@ def _probe_google_sheets(cfg: dict[str, Any]) -> dict[str, Any]:
             "source": "google_sheets",
             "message": f"Sheets probe failed: {e}",
         }
+
+
+def _probe_rest(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Send the configured HTTP request to the user's endpoint and report
+    what came back. Optional Bearer api_key, optional JSON path to drill
+    into. Returns response status, top-level shape (list/dict), and
+    sample columns if the result is a list of dicts.
+
+    Probe sticks to GET-or-POST with no body — full requests with body
+    happen during the run (upstream stage code).
+    """
+    import json as _json
+    import httpx
+
+    url = cfg["url"]
+    method = (cfg.get("method") or "GET").upper()
+    if method not in ("GET", "POST"):
+        return {
+            "ok": False,
+            "source": "rest_api",
+            "message": f"Unsupported method '{method}' (probe accepts GET or POST).",
+        }
+
+    headers: dict[str, str] = {"Accept": "application/json"}
+    api_key = cfg.get("api_key")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.request(method, url, headers=headers)
+    except httpx.HTTPError as e:
+        return {
+            "ok": False,
+            "source": "rest_api",
+            "message": f"HTTP error: {e}",
+        }
+
+    if resp.status_code >= 400:
+        return {
+            "ok": False,
+            "source": "rest_api",
+            "message": f"HTTP {resp.status_code}: {resp.text[:200]}",
+        }
+
+    try:
+        data = resp.json()
+    except _json.JSONDecodeError as e:
+        return {
+            "ok": False,
+            "source": "rest_api",
+            "message": f"Response is not JSON: {e}",
+        }
+
+    # Optional json_path drill-down (dotted: "data.items")
+    json_path = cfg.get("json_path")
+    if json_path:
+        try:
+            for part in json_path.split("."):
+                if not part:
+                    continue
+                if isinstance(data, list) and part.isdigit():
+                    data = data[int(part)]
+                else:
+                    data = data[part]
+        except (KeyError, IndexError, TypeError) as e:
+            return {
+                "ok": False,
+                "source": "rest_api",
+                "message": f"json_path '{json_path}' could not be resolved: {e}",
+            }
+
+    # Describe the resolved shape
+    if isinstance(data, list):
+        first = data[0] if data else None
+        cols = list(first.keys()) if isinstance(first, dict) else []
+        return {
+            "ok": True,
+            "source": "rest_api",
+            "message": f"Connected · HTTP {resp.status_code} · {len(data)} records · {len(cols)} columns",
+            "sample": {
+                "status_code": resp.status_code,
+                "record_count": len(data),
+                "columns": cols[:30],
+            },
+        }
+    if isinstance(data, dict):
+        return {
+            "ok": True,
+            "source": "rest_api",
+            "message": f"Connected · HTTP {resp.status_code} · object with {len(data)} top-level keys",
+            "sample": {
+                "status_code": resp.status_code,
+                "top_level_keys": list(data.keys())[:30],
+            },
+        }
+    return {
+        "ok": True,
+        "source": "rest_api",
+        "message": f"Connected · HTTP {resp.status_code} · scalar response",
+        "sample": {"status_code": resp.status_code, "type": type(data).__name__},
+    }
 
 
 def _probe_sqlite(cfg: dict[str, Any]) -> dict[str, Any]:

@@ -123,13 +123,15 @@ const DATA_SOURCES = [
   },
   {
     id: 'api',
-    label: 'HTTP / REST (validation only)',
-    hint: 'shipping in chunk F',
+    label: 'HTTP / REST',
+    hint: 'json endpoint',
     backend: 'rest_api',
-    liveProbe: false,
+    liveProbe: true,
     fields: [
-      { key: 'url',    label: 'Endpoint URL', def: 'https://api.example.com/v2/customers' },
-      { key: 'method', label: 'Method',       def: 'GET' },
+      { key: 'url',       label: 'Endpoint URL',                                  def: 'https://api.example.com/v2/customers' },
+      { key: 'method',    label: 'Method (GET or POST)',                          def: 'GET' },
+      { key: 'api_key',   label: 'API key (optional · sent as Bearer token)',     def: '', secret: true },
+      { key: 'json_path', label: 'JSON path to records (optional · e.g. data.items)', def: '' },
     ],
   },
 ];
