@@ -31,12 +31,17 @@ import { useEffect, useReducer, useRef } from 'react';
 
 const MAX_EVENT_LOG = 500;
 
+const MAX_LOG_LINES_PER_STAGE = 200;
+
 const initialState = {
   status: 'idle',
   model: null,
   narrative: '',
   narrativeTokens: { in: null, out: null },
   stages: [],
+  // Per-stage log line buffers, keyed by stage index. Lines accumulate as
+  // `stage_log` events stream in; capped to the last N to keep state lean.
+  stageLogs: {},
   leaderboard: null,
   outputs: null,
   elapsedS: null,
@@ -124,6 +129,19 @@ function reducer(state, action) {
       return { ...state, stages, events };
     }
 
+    case 'stage_log': {
+      // Append a log line to the per-stage buffer (keep last N).
+      const idx = data.index;
+      if (idx == null || data.text == null) return { ...state, events };
+      const prev = state.stageLogs[idx] || [];
+      const next = [...prev, data.text].slice(-MAX_LOG_LINES_PER_STAGE);
+      return {
+        ...state,
+        stageLogs: { ...state.stageLogs, [idx]: next },
+        events,
+      };
+    }
+
     case 'stage_failed': {
       // Already marked failed in stage_done; just record the log path
       return { ...state, events };
@@ -181,6 +199,7 @@ export default function useEngineStream(runId) {
       'stage_started',
       'stage_done',
       'stage_failed',
+      'stage_log',
       'outputs_copied',
       'leaderboard',
       'complete',

@@ -293,6 +293,84 @@ function RealRunning({ scenario, theme, runId, onComplete }) {
             </span>
           )}
         </div>
+        <StageLogTail stream={stream} stages={stages} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Bottom panel of the right pane — the live tail of stdout from the
+ * stage subprocess that's currently executing. Picks the running stage
+ * (or, after all stages finish, the last one). Shows last ~7 lines.
+ */
+function StageLogTail({ stream, stages }) {
+  const activeIndex = (() => {
+    const running = stages.findIndex((s) => s.status === 'running');
+    if (running >= 0) return running;
+    // Fall back to the last stage that has any logs (most recent)
+    const indices = Object.keys(stream.stageLogs || {}).map(Number).sort((a, b) => b - a);
+    return indices[0] ?? -1;
+  })();
+  if (activeIndex < 0) return null;
+
+  const lines = (stream.stageLogs && stream.stageLogs[activeIndex]) || [];
+  if (!lines.length) return null;
+  const tail = lines.slice(-7);
+  const stage = stages[activeIndex];
+
+  return (
+    <div
+      style={{
+        borderTop: '1px solid #1F2937',
+        background: '#070D1A',
+        maxHeight: 140,
+        overflow: 'hidden',
+        flexShrink: 0,
+      }}
+    >
+      <div
+        style={{
+          padding: '6px 16px',
+          fontSize: 10,
+          letterSpacing: 1.4,
+          color: '#9CA3AF',
+          fontFamily: 'var(--font-mono)',
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          background: '#0E1626',
+          borderBottom: '1px solid #1F2937',
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+        }}
+      >
+        <span style={{ color: '#60A5FA' }}>›</span>
+        <span>stage {String(activeIndex + 1).padStart(2, '0')} log · {stage?.name || ''}</span>
+      </div>
+      <div
+        style={{
+          padding: '8px 16px',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11.5,
+          color: '#CBD5E1',
+          lineHeight: 1.55,
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {tail.map((l, i) => (
+          <div
+            key={i}
+            style={{
+              opacity: i === tail.length - 1 ? 1 : 0.5 + (i / tail.length) * 0.5,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {l}
+          </div>
+        ))}
       </div>
     </div>
   );

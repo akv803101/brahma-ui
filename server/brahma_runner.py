@@ -102,9 +102,15 @@ class BrahmaRunner:
             t_stage = time.time()
             yield {"event": "stage_started", "index": i, "label": label, "script": script_name, "of": len(_STAGE_SCRIPTS)}
 
-            ok, log_path = self._run_stage_subprocess(script_name, run_dir, on_line=lambda line, idx=i, lab=label: None)
-            # Re-run for streaming (the above run already finished); cheaper to actually stream:
-            # (refactor below: stream directly instead of running twice)
+            ok = True
+            log_path = run_dir / "logs" / f"{script_name}.log"
+            for ev in self._stream_stage(script_name, run_dir, i, label):
+                if ev["event"] == "stage_log":
+                    yield ev
+                elif ev["event"] == "_stage_result":
+                    ok = ev["ok"]
+                    log_path = Path(ev["log_path"])
+
             elapsed = time.time() - t_stage
             stage_results.append({"label": label, "ok": ok, "elapsed_s": round(elapsed, 2), "log": str(log_path)})
             yield {"event": "stage_done", "index": i, "label": label, "ok": ok, "elapsed_s": round(elapsed, 2)}
@@ -206,32 +212,70 @@ class BrahmaRunner:
         finally:
             os.chdir(cwd_save)
 
-    def _run_stage_subprocess(self, script_name: str, run_dir: Path, on_line) -> tuple[bool, Path]:
+    def _stream_stage(
+        self, script_name: str, run_dir: Path, index: int, label: str
+    ) -> Iterator[dict[str, Any]]:
         """
-        Run a single stage as a subprocess, capturing stdout to a per-stage log
-        and to run_dir/logs/. Returns (ok, log_path).
+        Run a single stage as a subprocess, streaming each stdout line as a
+        `stage_log` event. Final result is delivered as an internal
+        `_stage_result` event so the caller knows ok + log_path.
 
-        NOTE: streaming is done in the parent's run() via Popen; this signature
-        is preserved for future refactor where we move the streaming inline.
+        Lines are also persisted to runs/{id}/logs/{script}.log on the fly
+        so a refresh after the run shows the same content.
         """
         log_dir = run_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"{script_name}.log"
 
-        proc = subprocess.run(
-            [sys.executable, "-X", "utf8", str(self.brahma_dir / f"{script_name}.py")],
+        env = dict(os.environ)
+        env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        proc = subprocess.Popen(
+            [sys.executable, "-X", "utf8", "-u", str(self.brahma_dir / f"{script_name}.py")],
             cwd=str(self.brahma_dir),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=600,
+            bufsize=1,  # line-buffered
+            env=env,
         )
-        log_path.write_text(
-            f"=== STDOUT ===\n{proc.stdout}\n\n=== STDERR ===\n{proc.stderr}",
-            encoding="utf-8",
-        )
-        return proc.returncode == 0, log_path
+
+        log_lines: list[str] = []
+        emitted = 0
+        # Don't flood SSE with thousands of trivial lines — cap per stage.
+        MAX_EMITTED = 200
+        try:
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                line = raw.rstrip("\n")
+                log_lines.append(line)
+                if line.strip() and emitted < MAX_EMITTED:
+                    emitted += 1
+                    yield {
+                        "event": "stage_log",
+                        "index": index,
+                        "label": label,
+                        "text": line[:500],  # cap individual line length too
+                    }
+            proc.wait(timeout=600)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+        log_path.write_text("\n".join(log_lines), encoding="utf-8")
+
+        ok = proc.returncode == 0
+        if emitted >= MAX_EMITTED:
+            yield {
+                "event": "stage_log",
+                "index": index,
+                "label": label,
+                "text": f"… (truncated, {len(log_lines) - MAX_EMITTED} more lines in {log_path.name})",
+            }
+        yield {"event": "_stage_result", "ok": ok, "log_path": str(log_path)}
 
     # ── Phase 3 helpers ────────────────────────────────────────────────
 
