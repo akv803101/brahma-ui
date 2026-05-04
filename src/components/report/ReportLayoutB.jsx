@@ -2,15 +2,45 @@ import React from 'react';
 import { SHAPPanel } from '../primitives';
 import HeroBanner from './HeroBanner.jsx';
 import ProblemCharts from './ProblemCharts.jsx';
+import ChartGrid from './ChartGrid.jsx';
+import RealLeaderboard from './RealLeaderboard.jsx';
+import { RealReportHero, NarrativeSection, SectionTitle } from './RealReportSections.jsx';
 import { formatValue } from '../../theme/useTheme.js';
 import { getStagesForScenario } from '../../data/scenarios.js';
 
 /**
  * VARIATION B — narrative-first.
- * The hero finding gets a panel of its own; the chart grid is anchored to it.
- * Order: Hero · finding panel (headline + narrative + 3 inline KPIs + chart grid) · SHAP.
+ *
+ * Real:  big finding hero + inline narrative → leaderboard → chart grid
+ * Mock:  hero → finding panel (headline + narrative + 3 inline KPIs + chart grid) → SHAP
  */
-export default function ReportLayoutB({ scenario, theme, stageIdx }) {
+export default function ReportLayoutB({ scenario, theme, stageIdx, report, runId }) {
+  if (report?.mode === 'real') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <RealReportHero goal={report.goal} report={report} theme={theme} accent="finding" />
+
+        {report.narrative && (
+          <>
+            <SectionTitle theme={theme}>Brahma's reasoning</SectionTitle>
+            <NarrativeSection narrative={report.narrative} theme={theme} maxHeight={420} />
+          </>
+        )}
+
+        <SectionTitle theme={theme}>Model leaderboard</SectionTitle>
+        <RealLeaderboard rows={report.leaderboard || []} theme={theme} />
+
+        <SectionTitle theme={theme}>
+          Evaluation charts · {report.charts?.length || 0} produced
+        </SectionTitle>
+        <ChartGrid charts={report.charts || []} runId={runId} theme={theme} />
+      </div>
+    );
+  }
+  return <MockReportLayoutB scenario={scenario} theme={theme} stageIdx={stageIdx} />;
+}
+
+function MockReportLayoutB({ scenario, theme, stageIdx }) {
   const stages = getStagesForScenario(scenario);
 
   return (
@@ -107,22 +137,5 @@ export default function ReportLayoutB({ scenario, theme, stageIdx }) {
       <SectionTitle theme={theme}>What drives the prediction</SectionTitle>
       <SHAPPanel features={scenario.features} theme={theme} />
     </div>
-  );
-}
-
-function SectionTitle({ theme, children }) {
-  return (
-    <h2
-      style={{
-        fontSize: 11,
-        fontWeight: 700,
-        letterSpacing: 1.2,
-        color: theme.fg2,
-        textTransform: 'uppercase',
-        margin: '10px 0 0',
-      }}
-    >
-      {children}
-    </h2>
   );
 }
