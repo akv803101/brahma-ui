@@ -32,7 +32,7 @@ import asyncio
 import queue
 import threading
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -617,6 +617,120 @@ def list_scenarios() -> dict[str, Any]:
     return {
         sid: {k: v for k, v in s.items() if k != "score_fn"}
         for sid, s in SCENARIOS.items()
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════
+# File uploads — for sourceConfig.type='file' when the user picks a CSV
+# from their laptop. The file is saved to a per-user uploads dir and the
+# returned temp_path becomes the sourceConfig.temp_path for the next run.
+# ════════════════════════════════════════════════════════════════════════
+
+_UPLOAD_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
+_UPLOAD_ALLOWED_EXT = {".csv", ".xlsx", ".xls", ".parquet", ".json", ".tsv"}
+
+
+def _safe_filename(name: str) -> str:
+    """Strip directory components and any character that could break a path."""
+    base = Path(name).name  # drops any directory traversal
+    safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in base)
+    return safe[:120] or "uploaded.csv"
+
+
+@app.post("/api/uploads")
+async def upload_file(
+    user: Annotated[User, Depends(current_user)],
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """
+    Accept a single file upload from the Connect screen, save it to
+    runs/uploads/{user_id}/, and return a sourceConfig-compatible
+    {filename, temp_path, size_bytes, columns, row_count} payload.
+
+    Validation:
+      - Extension must be in _UPLOAD_ALLOWED_EXT (csv, xlsx, xls, parquet,
+        json, tsv).
+      - Size capped at 50 MB.
+      - Filename is sanitized (path-traversal proof).
+    """
+    if not file.filename:
+        raise HTTPException(400, "No filename provided.")
+    safe = _safe_filename(file.filename)
+    ext = Path(safe).suffix.lower()
+    if ext not in _UPLOAD_ALLOWED_EXT:
+        raise HTTPException(
+            400,
+            f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(_UPLOAD_ALLOWED_EXT))}",
+        )
+
+    repo_root = Path(__file__).resolve().parent.parent
+    uploads_dir = repo_root / "runs" / "uploads" / str(user.id)
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = int(time.time())
+    target = uploads_dir / f"{ts}_{safe}"
+
+    # Stream-write so we can enforce the size cap mid-upload
+    written = 0
+    try:
+        with target.open("wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > _UPLOAD_MAX_BYTES:
+                    f.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        413,
+                        f"File too large: {written / (1024 * 1024):.1f} MB > {_UPLOAD_MAX_BYTES / (1024 * 1024):.0f} MB cap",
+                    )
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        target.unlink(missing_ok=True)
+        raise HTTPException(500, f"Upload failed: {e}") from e
+
+    # Sniff: try to read a tiny preview so the UI can show "✓ uploaded · 22 cols"
+    columns: list[str] = []
+    row_count: int | None = None
+    try:
+        import pandas as pd
+        if ext == ".csv":
+            df_head = pd.read_csv(target, nrows=5)
+            columns = list(df_head.columns)
+            # cheap row count via line scan; capped to avoid choking on huge files
+            with target.open("r", encoding="utf-8", errors="ignore") as f:
+                row_count = sum(1 for _ in f) - 1  # minus header
+        elif ext == ".tsv":
+            df_head = pd.read_csv(target, nrows=5, sep="\t")
+            columns = list(df_head.columns)
+        elif ext in (".xlsx", ".xls"):
+            df_head = pd.read_excel(target, nrows=5)
+            columns = list(df_head.columns)
+        elif ext == ".parquet":
+            df_head = pd.read_parquet(target).head(5)
+            columns = list(df_head.columns)
+        elif ext == ".json":
+            df_head = pd.read_json(target).head(5)
+            columns = list(df_head.columns)
+    except Exception as e:  # noqa: BLE001
+        # Don't fail the upload just because sniffing didn't work — the
+        # file is on disk and the engine will try to read it later.
+        columns = []
+        row_count = None
+
+    return {
+        "filename": safe,
+        # Absolute POSIX path — works regardless of where the engine cwd's to
+        "temp_path": str(target).replace("\\", "/"),
+        "size_bytes": written,
+        "size_mb": round(written / (1024 * 1024), 2),
+        "columns": columns[:30],
+        "column_count": len(columns) if columns else None,
+        "row_count": row_count,
     }
 
 

@@ -83,6 +83,20 @@ export const pipelinesApi = {
     request('/pipelines', { method: 'POST', body: JSON.stringify(body) }),
   testConnection: (body) =>
     request('/pipelines/test-connection', { method: 'POST', body: JSON.stringify(body) }),
+  uploadFile: async (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/uploads', {
+      method: 'POST',
+      credentials: 'include',
+      body: fd,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new ApiError(typeof body.detail === 'string' ? body.detail : 'Upload failed', res.status);
+    }
+    return res.json();
+  },
   getReport: (runId) =>
     request(`/pipelines/${encodeURIComponent(runId)}/report`),
   predict: (runId, inputs) =>

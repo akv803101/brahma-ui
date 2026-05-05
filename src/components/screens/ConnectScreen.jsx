@@ -28,13 +28,15 @@ import { pipelinesApi, ApiError } from '../../auth';
 const DATA_SOURCES = [
   {
     id: 'csv',
-    label: 'Local CSV file',
-    hint: 'bundled credit_card_customers.csv',
+    label: 'Local CSV file (upload from your laptop)',
+    hint: 'csv · xlsx · parquet · json · tsv (50 MB max)',
     backend: 'file',
     liveProbe: true,
+    upload: true,         // J1: render the upload widget instead of text fields
     fields: [
-      { key: 'filename',  label: 'Filename',                       def: 'credit_card_customers.csv' },
-      { key: 'temp_path', label: 'Path (relative to vendor/brahma)', def: 'data/credit_card_customers.csv' },
+      // Filled in by handleFileUpload after the user picks a file
+      { key: 'filename',  label: 'Filename',  def: '' },
+      { key: 'temp_path', label: 'Path',      def: '' },
     ],
   },
   {
@@ -220,6 +222,135 @@ function SourceIcon({ id, color, size = 18 }) {
   }
 }
 
+/**
+ * J1 — drag-and-drop or click file picker for the local-CSV source.
+ * Uses pipelinesApi.uploadFile under the hood (handler in parent).
+ *
+ * States are driven by the parent's `probe`:
+ *   probe.status === 'testing'  → "uploading… 🔄" with the filename
+ *   probe.status === 'ok'       → "✓ {filename} · 638 KB · 22 cols"
+ *   probe.status === 'error'    → red "✕ {message}"
+ *   else                        → drop target with "Click to choose a file" CTA
+ */
+function FileUploadWidget({ theme, inputBg, probe, currentFile, onFile }) {
+  const inputRef = React.useRef(null);
+  const [dragOver, setDragOver] = React.useState(false);
+  const isDark = theme.bg === '#0B1020';
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) onFile(file);
+  };
+
+  const onChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) onFile(file);
+  };
+
+  const status = probe.status;
+  const tone =
+    status === 'ok'
+      ? theme.pos
+      : status === 'error'
+      ? theme.neg
+      : status === 'testing'
+      ? theme.primary
+      : theme.fg2;
+
+  return (
+    <div>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        onClick={() => inputRef.current?.click()}
+        style={{
+          background: inputBg,
+          border: `2px dashed ${dragOver ? theme.primary : status === 'error' ? theme.neg : theme.border}`,
+          borderRadius: 12,
+          padding: '20px 18px',
+          cursor: 'pointer',
+          textAlign: 'center',
+          transition: 'border-color .15s, background .15s',
+        }}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv,.tsv,.xlsx,.xls,.parquet,.json"
+          onChange={onChange}
+          style={{ display: 'none' }}
+        />
+        <div
+          style={{
+            fontSize: 28,
+            color: tone,
+            marginBottom: 6,
+            fontWeight: 700,
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          {status === 'ok' ? '✓' : status === 'error' ? '✕' : status === 'testing' ? '…' : '↑'}
+        </div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: theme.fg, marginBottom: 4 }}>
+          {status === 'ok' && currentFile
+            ? `Uploaded: ${currentFile}`
+            : status === 'testing'
+            ? 'Uploading…'
+            : status === 'error'
+            ? 'Upload failed — click to try again'
+            : 'Click to choose a file or drop one here'}
+        </div>
+        <div style={{ fontSize: 11, color: theme.fg3, fontFamily: 'var(--font-mono)' }}>
+          csv · tsv · xlsx · xls · parquet · json   ·   max 50 MB
+        </div>
+      </div>
+
+      {probe.message && status !== 'idle' && (
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 11.5,
+            fontFamily: 'var(--font-mono)',
+            color: tone,
+            wordBreak: 'break-word',
+          }}
+        >
+          {probe.message}
+        </div>
+      )}
+
+      {probe.sample?.columns?.length > 0 && status === 'ok' && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: '10px 12px',
+            background: isDark ? '#0B1020' : '#FFFFFF',
+            border: `1px solid ${theme.border}`,
+            borderRadius: 8,
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            color: theme.fg2,
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ color: theme.fg3, marginBottom: 4, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', fontSize: 10 }}>
+            Detected columns
+          </div>
+          {probe.sample.columns.slice(0, 12).join(' · ')}
+          {probe.sample.columns.length > 12 && ` … (+${probe.sample.columns.length - 12} more)`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function StepCard({ theme, n, title, children, done = false, disabled = false }) {
   const isDark = theme.bg === '#0B1020';
   return (
@@ -320,6 +451,47 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
     if (!step2Done) return;
     const sourceConfig = buildSourceConfig(source, fieldVals);
     onStart?.({ sourceConfig, goal });
+  };
+
+  // J1: file upload from the user's laptop. On success, populates the
+  // hidden filename + temp_path field values AND auto-marks the probe
+  // as ok so the user doesn't need a second Test connection click.
+  const handleFileUpload = async (file) => {
+    if (!file) return;
+    setProbe({
+      status: 'testing',
+      message: `uploading ${file.name}…`,
+      sample: null,
+      warning: null,
+      severity: null,
+    });
+    try {
+      const res = await pipelinesApi.uploadFile(file);
+      // Stash the server-side path into fieldVals so buildSourceConfig
+      // picks it up when the user clicks Start the pipeline.
+      setFieldVals({ filename: res.filename, temp_path: res.temp_path });
+      const colCount = res.column_count;
+      const rowCount = res.row_count;
+      const summary =
+        `${res.filename} · ${res.size_mb.toFixed(2)} MB` +
+        (rowCount != null ? ` · ${rowCount.toLocaleString()} rows` : '') +
+        (colCount != null ? ` · ${colCount} cols` : '');
+      setProbe({
+        status: 'ok',
+        message: summary,
+        sample: { columns: res.columns, row_count: rowCount },
+        warning: null,
+        severity: null,
+      });
+    } catch (e) {
+      setProbe({
+        status: 'error',
+        message: e instanceof ApiError ? e.message : 'Upload failed.',
+        sample: null,
+        warning: null,
+        severity: null,
+      });
+    }
   };
 
   const stages = getStagesForScenario(scenario);
@@ -430,6 +602,15 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
         </div>
 
         {/* Source-specific fields */}
+        {source.upload ? (
+          <FileUploadWidget
+            theme={theme}
+            inputBg={inputBg}
+            probe={probe}
+            currentFile={fieldVals.filename || null}
+            onFile={handleFileUpload}
+          />
+        ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {source.fields.map((f) => (
             <div key={f.key}>
@@ -485,7 +666,12 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
             </div>
           ))}
         </div>
+        )}
 
+        {/* Test connection button — hidden for the upload source since
+            handleFileUpload already validates + sniffs during the upload itself. */}
+        {!source.upload && (
+        <>
         <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <button
             onClick={handleTestConnection}
@@ -550,6 +736,8 @@ export default function ConnectScreen({ scenario, theme, onStart, onUseTemplate,
           >
             {probe.warning}
           </div>
+        )}
+        </>
         )}
       </StepCard>
 
